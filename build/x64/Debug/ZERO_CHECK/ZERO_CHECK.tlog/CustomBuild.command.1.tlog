@@ -1,0 +1,10 @@
+^D:\DEV\NYXENGINE\BUILD\CMAKEFILES\EC94F0283C285572C53A1E8F076D20C1\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Dev/NyxEngine -BD:/Dev/NyxEngine/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Dev/NyxEngine/build/NyxEngine.slnx
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

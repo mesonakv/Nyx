@@ -1,0 +1,13 @@
+D:\Dev\NyxEngine\Game\Target\TargetManager.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\TargetManager.obj
+D:\Dev\NyxEngine\NyxEngine\Core\ImGuiManager.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\ImGuiManager.obj
+D:\Dev\NyxEngine\NyxEngine\Core\VulkanContext.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\VulkanContext.obj
+D:\Dev\NyxEngine\NyxEngine\Render\Renderer.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\Renderer.obj
+D:\Dev\NyxEngine\NyxEngine\Scene\Camera.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\Camera.obj
+D:\Dev\NyxEngine\NyxEngine\Scene\Material.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\Material.obj
+D:\Dev\NyxEngine\main.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\main.obj
+D:\Dev\NyxEngine\ThirdParty\imgui\imgui.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\imgui.obj
+D:\Dev\NyxEngine\ThirdParty\imgui\imgui_draw.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\imgui_draw.obj
+D:\Dev\NyxEngine\ThirdParty\imgui\imgui_tables.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\imgui_tables.obj
+D:\Dev\NyxEngine\ThirdParty\imgui\imgui_widgets.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\imgui_widgets.obj
+D:\Dev\NyxEngine\ThirdParty\imgui\backends\imgui_impl_sdl2.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\imgui_impl_sdl2.obj
+D:\Dev\NyxEngine\ThirdParty\imgui\backends\imgui_impl_vulkan.cpp;D:\Dev\NyxEngine\build\NyxEngine.dir\Debug\imgui_impl_vulkan.obj
