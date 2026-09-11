@@ -7,17 +7,22 @@
 #include <cmath>
 #include <deque>
 #include <numeric>
+#include <atomic>
+#include <chrono>
 
 #include "NyxEngine/NyxEngine.h"
 #include "NyxEngine/Core/Logger.h"
 #include "NyxEngine/Core/Memory.h"
 #include "NyxEngine/Core/Platform.h"
+#include "NyxEngine/Core/EventBus.h"
+#include "NyxEngine/Core/JobSystem.h"
 #include "NyxEngine/Core/NyxMath.h"
 #include "NyxEngine/Core/FileSystem.h"
 #include "NyxEngine/Core/VulkanContext.h"
 #include "NyxEngine/Scene/Material.h"
 #include "NyxEngine/Editor/EditorPanel.h"
 #include "Game/Target/TargetManager.h"
+#include "NyxEngine/Core/JsonValue.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_sdl2.h>
@@ -61,6 +66,124 @@ int main(int argc, char* argv[]) {
     NYX_LOG_INFO("NyxEngine starting...");
     NYX_LOG_INFO("Executable dir: %s", FileSystem::GetExecutableDir().c_str());
     NYX_LOG_INFO("Working dir:    %s", FileSystem::GetWorkingDir().c_str());
+
+    // ============ EventBus 自测 ============
+    {
+        struct TestEventA { int value; };
+        struct TestEventB { const char* name; };
+
+        auto h1 = EventBus::Subscribe<TestEventA>([](const TestEventA& e) {
+            NYX_LOG_INFO("  [A ] received: value = %d", e.value);
+        });
+        auto h2 = EventBus::Subscribe<TestEventA>([](const TestEventA& e) {
+            NYX_LOG_INFO("  [A2] received: value = %d", e.value);
+        });
+        auto h3 = EventBus::Subscribe<TestEventB>([](const TestEventB& e) {
+            NYX_LOG_INFO("  [B ] received: name = %s", e.name);
+        });
+
+        NYX_LOG_INFO("EventBus test: emit A{1}");
+        EventBus::Emit(TestEventA{1});
+
+        NYX_LOG_INFO("EventBus test: unsubscribe handler 2");
+        EventBus::Unsubscribe(h2);
+
+        NYX_LOG_INFO("EventBus test: emit A{2}");
+        EventBus::Emit(TestEventA{2});
+
+        NYX_LOG_INFO("EventBus test: emit B{\"hello\"}");
+        EventBus::Emit(TestEventB{"hello"});
+
+        NYX_LOG_INFO("EventBus test: subscriptions = %zu", EventBus::GetSubscriptionCount());
+
+        EventBus::Unsubscribe(h1);
+        EventBus::Unsubscribe(h3);
+    }
+	
+#include "NyxEngine/Core/JsonValue.h"
+
+// ... 现有 include ...
+
+    // ============ JsonValue 自测 ============
+    {
+        NYX_LOG_INFO("JSON test: build");
+        JsonValue root;
+        root["name"] = "NyxEngine";
+        root["version"] = 1;
+        root["debug"] = false;
+        root["pi"] = 3.14159f;
+
+        root["lighting"]["timeOfDay"] = 0.5f;
+        root["lighting"]["ambientStrength"] = 0.35f;
+
+        root["tags"].Push("engine");
+        root["tags"].Push("realtime");
+        root["tags"].Push("vulkan");
+
+        std::string compact = root.ToString(false);
+        NYX_LOG_INFO("JSON compact: %s", compact.c_str());
+
+        std::string pretty = root.ToString(true);
+        NYX_LOG_INFO("JSON pretty: %s", pretty.c_str());
+
+        // 解析回来
+        std::string err;
+        JsonValue parsed = JsonValue::Parse(compact, &err);
+        if (!err.empty()) {
+            NYX_LOG_ERROR("JSON parse error: %s", err.c_str());
+        } else {
+            NYX_LOG_INFO("JSON parsed: name=%s, version=%d, timeOfDay=%.2f, tags=%zu",
+                         parsed["name"].AsString().c_str(),
+                         parsed["version"].AsInt(),
+                         parsed["lighting"]["timeOfDay"].AsFloat(),
+                         parsed["tags"].Size());
+        }
+
+        // 错误案例
+        std::string err2;
+        JsonValue bad = JsonValue::Parse("{\"a\":1,}", &err2);
+        NYX_LOG_INFO("JSON error case: %s", err2.c_str());
+
+        std::string err3;
+        JsonValue bad2 = JsonValue::Parse("[1, 2, ", &err3);
+        NYX_LOG_INFO("JSON error case: %s", err3.c_str());
+
+        std::string err4;
+        JsonValue bad3 = JsonValue::Parse("{\"a\": }", &err4);
+        NYX_LOG_INFO("JSON error case: %s", err4.c_str());
+    }
+
+    // ============ JobSystem 自测 ============
+    {
+        JobSystem jobs;
+        jobs.Initialize();
+        NYX_LOG_INFO("JobSystem test: %u workers", jobs.GetWorkerCount());
+
+        std::atomic<int> counter{0};
+        const int totalJobs = 20;
+
+        auto startTime = std::chrono::steady_clock::now();
+
+        for (int i = 0; i < totalJobs; i++) {
+            jobs.Submit([&counter]() {
+                // 模拟一点工作
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                counter.fetch_add(1);
+            });
+        }
+
+        jobs.WaitAll();
+
+        auto endTime = std::chrono::steady_clock::now();
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+
+        NYX_LOG_INFO("JobSystem test: completed %d/%d jobs in %lld ms",
+                     counter.load(), totalJobs, (long long)elapsedMs);
+        NYX_LOG_INFO("JobSystem test: pending = %zu, active = %zu",
+                     jobs.GetPendingJobCount(), jobs.GetActiveJobCount());
+
+        jobs.Shutdown();
+    }
 
     DisplaySettings displaySettings;
     displaySettings.width = 1280;
@@ -316,6 +439,7 @@ int main(int argc, char* argv[]) {
 
     Memory::PrintStats();
 
+    EventBus::Clear();
     engine.Shutdown();
     Platform::Shutdown();
     Memory::Shutdown();
