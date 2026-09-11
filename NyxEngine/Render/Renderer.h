@@ -77,4 +77,9 @@ public:
     void DrawFrame(VulkanContext& ctx, const FrameData& frame);
 
     void Cleanup(VulkanContext& ctx);
+
+private:
+    // E2: 把顶点数据上传到 GPU，创建 buffer + memory
+    void UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t vertexBytes,
+                        VkBuffer& outBuffer, VkDeviceMemory& outMemory);
 };

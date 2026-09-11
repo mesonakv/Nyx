@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "Logger.h"
+#include "../Resource/MeshData.h"
 #include <fstream>
 #include <cstring>
 #include <cmath>
@@ -220,9 +221,39 @@ void Renderer::DestroySyncObjects(VulkanContext& ctx) {
     currentFrame = 0;
 }
 
+// ============ E2: 通用 mesh 上传 ============
+
+void Renderer::UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t vertexBytes,
+                               VkBuffer& outBuffer, VkDeviceMemory& outMemory) {
+    VkBufferCreateInfo bi = {};
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = vertexBytes;
+    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    vkCreateBuffer(ctx.device, &bi, nullptr, &outBuffer);
+
+    VkMemoryRequirements memReqs;
+    vkGetBufferMemoryRequirements(ctx.device, outBuffer, &memReqs);
+
+    VkMemoryAllocateInfo ai = {};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = memReqs.size;
+    ai.memoryTypeIndex = ctx.FindMemoryType(memReqs.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    vkAllocateMemory(ctx.device, &ai, nullptr, &outMemory);
+    vkBindBufferMemory(ctx.device, outBuffer, outMemory, 0);
+
+    void* data;
+    vkMapMemory(ctx.device, outMemory, 0, vertexBytes, 0, &data);
+    memcpy(data, vertexData, vertexBytes);
+    vkUnmapMemory(ctx.device, outMemory);
+}
+
 // ============ Mesh ============
 
 void Renderer::CreateSkyMesh(VulkanContext& ctx) {
+    // 天空还是用 2D 顶点（vec2），不走 MeshData 路径
     struct Vertex2D { float x, y; };
 
     std::vector<Vertex2D> verts = {
@@ -263,9 +294,12 @@ void Renderer::CreateBallMesh(VulkanContext& ctx) {
     const int lonSegments = 32;
     const float radius = 0.5f;
 
-    struct Vertex { float x, y, z; float nx, ny, nz; float r, g, b; };
+    MeshData mesh;
 
-    std::vector<Vertex> vertices;
+    // 生成网格顶点（lat × lon）
+    std::vector<MeshVertex> grid;
+    grid.reserve((latSegments + 1) * (lonSegments + 1));
+
     for (int lat = 0; lat <= latSegments; lat++) {
         float theta = lat * 3.14159f / latSegments;
         for (int lon = 0; lon <= lonSegments; lon++) {
@@ -273,60 +307,38 @@ void Renderer::CreateBallMesh(VulkanContext& ctx) {
             float x = cos(phi) * sin(theta);
             float y = cos(theta);
             float z = sin(phi) * sin(theta);
-            Vertex v;
-            v.x = x * radius; v.y = y * radius; v.z = z * radius;
-            v.nx = x; v.ny = y; v.nz = z;
-            v.r = 0.36f; v.g = 0.36f; v.b = 0.84f;
-            vertices.push_back(v);
+
+            MeshVertex v;
+            v.position = glm::vec3(x * radius, y * radius, z * radius);
+            v.normal = glm::vec3(x, y, z);
+            v.color = glm::vec3(0.36f, 0.36f, 0.84f);
+            grid.push_back(v);
         }
     }
 
-    std::vector<Vertex> triVerts;
+    // 三角形化
+    mesh.vertices.reserve(latSegments * lonSegments * 6);
     for (int lat = 0; lat < latSegments; lat++) {
         for (int lon = 0; lon < lonSegments; lon++) {
             uint32_t first = lat * (lonSegments + 1) + lon;
             uint32_t second = first + lonSegments + 1;
-            triVerts.push_back(vertices[first]);
-            triVerts.push_back(vertices[second]);
-            triVerts.push_back(vertices[first + 1]);
-            triVerts.push_back(vertices[second]);
-            triVerts.push_back(vertices[second + 1]);
-            triVerts.push_back(vertices[first + 1]);
+            mesh.vertices.push_back(grid[first]);
+            mesh.vertices.push_back(grid[second]);
+            mesh.vertices.push_back(grid[first + 1]);
+            mesh.vertices.push_back(grid[second]);
+            mesh.vertices.push_back(grid[second + 1]);
+            mesh.vertices.push_back(grid[first + 1]);
         }
     }
 
-    vertexCount = (uint32_t)triVerts.size();
-    VkDeviceSize bufferSize = sizeof(Vertex) * triVerts.size();
-
-    VkBufferCreateInfo bi = {};
-    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = bufferSize;
-    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    vkCreateBuffer(ctx.device, &bi, nullptr, &vertexBuffer);
-
-    VkMemoryRequirements memReqs;
-    vkGetBufferMemoryRequirements(ctx.device, vertexBuffer, &memReqs);
-
-    VkMemoryAllocateInfo ai = {};
-    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize = memReqs.size;
-    ai.memoryTypeIndex = ctx.FindMemoryType(memReqs.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    vkAllocateMemory(ctx.device, &ai, nullptr, &vertexBufferMemory);
-    vkBindBufferMemory(ctx.device, vertexBuffer, vertexBufferMemory, 0);
-
-    void* data;
-    vkMapMemory(ctx.device, vertexBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, triVerts.data(), (size_t)bufferSize);
-    vkUnmapMemory(ctx.device, vertexBufferMemory);
+    vertexCount = (uint32_t)mesh.vertices.size();
+    UploadMeshData(ctx, mesh.vertices.data(), mesh.vertices.size() * sizeof(MeshVertex),
+                   vertexBuffer, vertexBufferMemory);
 
     NYX_LOG_INFO("Ball mesh: %u vertices", vertexCount);
 }
 
 void Renderer::CreateCrosshairMesh(VulkanContext& ctx) {
-    struct Vertex { float x, y, z; float nx, ny, nz; float r, g, b; };
-
     float aspect = (float)ctx.swapchainExtent.width / (float)ctx.swapchainExtent.height;
     float lineLengthPixels = 10.0f;
     float lineWidthPixels = 2.0f;
@@ -336,155 +348,90 @@ void Renderer::CreateCrosshairMesh(VulkanContext& ctx) {
     float halfLengthX = halfLengthY / aspect;
     float halfWidthX = halfWidthY / aspect;
 
-    std::vector<Vertex> verts;
+    MeshData mesh;
+
     auto addRect = [&](float x1, float y1, float x2, float y2) {
-        verts.push_back({x1, y1, 0.0f, 0,0,1, 0.85f,0.56f,0.66f});
-        verts.push_back({x2, y1, 0.0f, 0,0,1, 0.85f,0.56f,0.66f});
-        verts.push_back({x2, y2, 0.0f, 0,0,1, 0.85f,0.56f,0.66f});
-        verts.push_back({x1, y1, 0.0f, 0,0,1, 0.85f,0.56f,0.66f});
-        verts.push_back({x2, y2, 0.0f, 0,0,1, 0.85f,0.56f,0.66f});
-        verts.push_back({x1, y2, 0.0f, 0,0,1, 0.85f,0.56f,0.66f});
+        glm::vec3 color(0.85f, 0.56f, 0.66f);
+        glm::vec3 normal(0.0f, 0.0f, 1.0f);
+        mesh.vertices.push_back({glm::vec3(x1, y1, 0.0f), normal, color});
+        mesh.vertices.push_back({glm::vec3(x2, y1, 0.0f), normal, color});
+        mesh.vertices.push_back({glm::vec3(x2, y2, 0.0f), normal, color});
+        mesh.vertices.push_back({glm::vec3(x1, y1, 0.0f), normal, color});
+        mesh.vertices.push_back({glm::vec3(x2, y2, 0.0f), normal, color});
+        mesh.vertices.push_back({glm::vec3(x1, y2, 0.0f), normal, color});
     };
 
     addRect(-halfLengthX, -halfWidthY, halfLengthX, halfWidthY);
     addRect(-halfWidthX, -halfLengthY, halfWidthX, halfLengthY);
 
-    crosshairVertexCount = (uint32_t)verts.size();
-    VkDeviceSize bufferSize = sizeof(Vertex) * verts.size();
-
-    VkBufferCreateInfo bi = {};
-    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = bufferSize;
-    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    vkCreateBuffer(ctx.device, &bi, nullptr, &crosshairVertexBuffer);
-
-    VkMemoryRequirements memReqs;
-    vkGetBufferMemoryRequirements(ctx.device, crosshairVertexBuffer, &memReqs);
-
-    VkMemoryAllocateInfo ai = {};
-    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize = memReqs.size;
-    ai.memoryTypeIndex = ctx.FindMemoryType(memReqs.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    vkAllocateMemory(ctx.device, &ai, nullptr, &crosshairVertexBufferMemory);
-    vkBindBufferMemory(ctx.device, crosshairVertexBuffer, crosshairVertexBufferMemory, 0);
-
-    void* data;
-    vkMapMemory(ctx.device, crosshairVertexBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, verts.data(), (size_t)bufferSize);
-    vkUnmapMemory(ctx.device, crosshairVertexBufferMemory);
+    crosshairVertexCount = (uint32_t)mesh.vertices.size();
+    UploadMeshData(ctx, mesh.vertices.data(), mesh.vertices.size() * sizeof(MeshVertex),
+                   crosshairVertexBuffer, crosshairVertexBufferMemory);
 
     NYX_LOG_INFO("Crosshair mesh: %u vertices", crosshairVertexCount);
 }
 
 void Renderer::CreateGroundMesh(VulkanContext& ctx) {
-    struct Vertex { float x, y, z; float nx, ny, nz; float r, g, b; };
-
     float size = 30.0f;
     float y = -2.0f;
 
-    std::vector<Vertex> verts;
-    auto addQuad = [&](float x1, float z1, float x2, float z2) {
-        Vertex v;
-        v.nx = 0.0f; v.ny = 1.0f; v.nz = 0.0f;
-        v.r = 0.7f; v.g = 0.7f; v.b = 0.72f;
+    MeshData mesh;
+    mesh.vertices.reserve(6);
 
-        v.x = x1; v.y = y; v.z = z1; verts.push_back(v);
-        v.x = x2; v.y = y; v.z = z1; verts.push_back(v);
-        v.x = x2; v.y = y; v.z = z2; verts.push_back(v);
+    glm::vec3 normal(0.0f, 1.0f, 0.0f);
+    glm::vec3 color(0.7f, 0.7f, 0.72f);
 
-        v.x = x1; v.y = y; v.z = z1; verts.push_back(v);
-        v.x = x2; v.y = y; v.z = z2; verts.push_back(v);
-        v.x = x1; v.y = y; v.z = z2; verts.push_back(v);
+    auto addVertex = [&](float px, float pz) {
+        mesh.vertices.push_back({glm::vec3(px, y, pz), normal, color});
     };
 
-    addQuad(-size, -size, size, size);
+    // 两个三角形组成一个正方形
+    addVertex(-size, -size);
+    addVertex( size, -size);
+    addVertex( size,  size);
 
-    groundVertexCount = (uint32_t)verts.size();
-    VkDeviceSize bufferSize = sizeof(Vertex) * verts.size();
+    addVertex(-size, -size);
+    addVertex( size,  size);
+    addVertex(-size,  size);
 
-    VkBufferCreateInfo bi = {};
-    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = bufferSize;
-    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    vkCreateBuffer(ctx.device, &bi, nullptr, &groundVertexBuffer);
-
-    VkMemoryRequirements memReqs;
-    vkGetBufferMemoryRequirements(ctx.device, groundVertexBuffer, &memReqs);
-
-    VkMemoryAllocateInfo ai = {};
-    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize = memReqs.size;
-    ai.memoryTypeIndex = ctx.FindMemoryType(memReqs.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    vkAllocateMemory(ctx.device, &ai, nullptr, &groundVertexBufferMemory);
-    vkBindBufferMemory(ctx.device, groundVertexBuffer, groundVertexBufferMemory, 0);
-
-    void* data;
-    vkMapMemory(ctx.device, groundVertexBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, verts.data(), (size_t)bufferSize);
-    vkUnmapMemory(ctx.device, groundVertexBufferMemory);
+    groundVertexCount = (uint32_t)mesh.vertices.size();
+    UploadMeshData(ctx, mesh.vertices.data(), mesh.vertices.size() * sizeof(MeshVertex),
+                   groundVertexBuffer, groundVertexBufferMemory);
 
     NYX_LOG_INFO("Ground mesh: %u vertices", groundVertexCount);
 }
 
 void Renderer::CreateShadowMesh(VulkanContext& ctx) {
-    struct Vertex { float x, y, z; float nx, ny, nz; float r, g, b; };
-
     const int segments = 32;
     float radius = 0.5f;
-    std::vector<Vertex> verts;
-    Vertex center;
-    center.x = 0; center.y = 0; center.z = 0;
-    center.nx = 0; center.ny = 1; center.nz = 0;
-    center.r = 0; center.g = 0; center.b = 0;
-    verts.push_back(center);
+
+    MeshData mesh;
+    mesh.vertices.reserve(segments * 3);
+
+    glm::vec3 normal(0.0f, 1.0f, 0.0f);
+    glm::vec3 color(0.0f, 0.0f, 0.0f);
+
+    // 扇形：中心点 + 环
+    std::vector<MeshVertex> ring;
+    ring.reserve(segments + 2);
+    ring.push_back({glm::vec3(0.0f, 0.0f, 0.0f), normal, color});
 
     for (int i = 0; i <= segments; i++) {
         float angle = i * 2.0f * 3.14159f / segments;
         float x = cos(angle) * radius;
         float z = sin(angle) * radius;
-        Vertex v;
-        v.x = x; v.y = 0; v.z = z;
-        v.nx = 0; v.ny = 1; v.nz = 0;
-        v.r = 0; v.g = 0; v.b = 0;
-        verts.push_back(v);
+        ring.push_back({glm::vec3(x, 0.0f, z), normal, color});
     }
 
-    std::vector<Vertex> triVerts;
     for (int i = 1; i <= segments; i++) {
-        triVerts.push_back(verts[0]);
-        triVerts.push_back(verts[i]);
-        triVerts.push_back(verts[i+1]);
+        mesh.vertices.push_back(ring[0]);
+        mesh.vertices.push_back(ring[i]);
+        mesh.vertices.push_back(ring[i + 1]);
     }
 
-    shadowVertexCount = (uint32_t)triVerts.size();
-    VkDeviceSize bufferSize = sizeof(Vertex) * triVerts.size();
-
-    VkBufferCreateInfo bi = {};
-    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = bufferSize;
-    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    vkCreateBuffer(ctx.device, &bi, nullptr, &shadowVertexBuffer);
-
-    VkMemoryRequirements memReqs;
-    vkGetBufferMemoryRequirements(ctx.device, shadowVertexBuffer, &memReqs);
-
-    VkMemoryAllocateInfo ai = {};
-    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize = memReqs.size;
-    ai.memoryTypeIndex = ctx.FindMemoryType(memReqs.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    vkAllocateMemory(ctx.device, &ai, nullptr, &shadowVertexBufferMemory);
-    vkBindBufferMemory(ctx.device, shadowVertexBuffer, shadowVertexBufferMemory, 0);
-
-    void* data;
-    vkMapMemory(ctx.device, shadowVertexBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, triVerts.data(), (size_t)bufferSize);
-    vkUnmapMemory(ctx.device, shadowVertexBufferMemory);
+    shadowVertexCount = (uint32_t)mesh.vertices.size();
+    UploadMeshData(ctx, mesh.vertices.data(), mesh.vertices.size() * sizeof(MeshVertex),
+                   shadowVertexBuffer, shadowVertexBufferMemory);
 
     NYX_LOG_INFO("Shadow mesh: %u vertices", shadowVertexCount);
 }
@@ -777,7 +724,7 @@ void Renderer::RecreatePipeline(VulkanContext& ctx) {
     CreateSyncObjects(ctx);
 }
 
-// ============ 录制命令缓冲（D1：接收 FrameData）============
+// ============ 录制命令缓冲 ============
 
 void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, const FrameData& frame) {
     if (ctx.commandBuffers.size() != ctx.framebuffers.size()) {
@@ -935,7 +882,7 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, cons
     vkEndCommandBuffer(cmd);
 }
 
-// ============ DrawFrame（D1：接收 FrameData）============
+// ============ DrawFrame ============
 
 void Renderer::DrawFrame(VulkanContext& ctx, const FrameData& frame) {
     vkWaitForFences(ctx.device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);

@@ -13,6 +13,8 @@
 #include "NyxEngine/Core/FileSystem.h"
 #include "NyxEngine/Core/JsonValue.h"
 #include "NyxEngine/Core/VulkanContext.h"
+#include "NyxEngine/Resource/ResourceManager.h"
+#include "NyxEngine/Resource/MeshLoader.h"
 #include "Game/MyGame.h"
 
 namespace {
@@ -129,10 +131,62 @@ void RunJobSystemTest() {
     jobs.Shutdown();
 }
 
+void RunResourceTest() {
+    // 内嵌一个简单的立方体 obj
+    static const char* kCubeObj =
+        "# Simple cube\n"
+        "v -0.5 -0.5  0.5  1 0 0\n"
+        "v  0.5 -0.5  0.5  1 0 0\n"
+        "v  0.5  0.5  0.5  1 0 0\n"
+        "v -0.5  0.5  0.5  1 0 0\n"
+        "v -0.5 -0.5 -0.5  0 1 0\n"
+        "v  0.5 -0.5 -0.5  0 1 0\n"
+        "v  0.5  0.5 -0.5  0 1 0\n"
+        "v -0.5  0.5 -0.5  0 1 0\n"
+        "vn  0  0  1\n"
+        "vn  0  0 -1\n"
+        "vn  1  0  0\n"
+        "vn -1  0  0\n"
+        "vn  0  1  0\n"
+        "vn  0 -1  0\n"
+        "f 1//1 2//1 3//1\n"
+        "f 1//1 3//1 4//1\n"
+        "f 5//2 7//2 6//2\n"
+        "f 5//2 8//2 7//2\n"
+        "f 2//3 6//3 7//3\n"
+        "f 2//3 7//3 3//3\n"
+        "f 1//4 4//4 8//4\n"
+        "f 1//4 8//4 5//4\n"
+        "f 4//5 3//5 7//5\n"
+        "f 4//5 7//5 8//5\n"
+        "f 1//6 5//6 6//6\n"
+        "f 1//6 6//6 2//6\n";
+
+    NYX_LOG_INFO("Resource test: loading cube");
+
+    auto mesh = ResourceManager::LoadMeshFromString(kCubeObj);
+    if (!mesh) {
+        NYX_LOG_ERROR("Resource test: failed to load cube");
+        return;
+    }
+
+    const MeshData& data = mesh->GetData();
+    NYX_LOG_INFO("Resource test: %zu vertices, %zu indices, %zu triangles",
+                 data.GetVertexCount(), data.GetIndexCount(), data.GetTriangleCount());
+
+    // 测试错误案例
+    std::string err;
+    MeshData badData;
+    if (!MeshLoader::LoadObjFromString("f 1 2 3\n", badData, &err)) {
+        NYX_LOG_INFO("Resource test: error case: %s", err.c_str());
+    }
+}
+
 void RunSelfTests() {
     RunEventBusTest();
     RunJsonTest();
     RunJobSystemTest();
+    RunResourceTest();
 }
 
 } // anonymous namespace
