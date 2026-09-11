@@ -6,18 +6,18 @@
 
 // ============ 每帧 uniform 数据 ============
 struct FrameUniforms {
-    glm::mat4 viewProj;              // proj * view，不含 model
-    glm::vec4 cameraPos;             // xyz = 世界坐标
-    glm::vec4 lightDirAndIntensity;  // xyz = 方向，w = 强度
-    glm::vec4 lightColor;            // rgb = 颜色
-    glm::vec4 ambientColor;          // rgb = 环境光（由天空颜色算出），w 未用
+    glm::mat4 viewProj;
+    glm::vec4 cameraPos;
+    glm::vec4 lightDirAndIntensity;
+    glm::vec4 lightColor;
+    glm::vec4 ambientColor;
 };
 
 // ============ 每物体 push constant（96 字节）============
 struct ObjectPushData {
-    glm::mat4 model;      // 64
-    glm::vec4 color;      // 16
-    glm::vec4 material;   // 16: x=metallic, y=roughness, z=emissive_strength, w=isScreenSpace
+    glm::mat4 model;
+    glm::vec4 color;
+    glm::vec4 material;
 };
 
 static std::vector<char> ReadFile(const std::string& filename) {
@@ -777,16 +777,9 @@ void Renderer::RecreatePipeline(VulkanContext& ctx) {
     CreateSyncObjects(ctx);
 }
 
-// ============ 录制命令缓冲 ============
+// ============ 录制命令缓冲（D1：接收 FrameData）============
 
-void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
-                                    const glm::vec3& lightDir,
-                                    const std::vector<glm::vec3>& targetPositions,
-                                    const std::vector<float>& targetScales,
-                                    const std::vector<Material>& targetMaterials,
-                                    const glm::vec4& skyTopColor,
-                                    const glm::vec4& skyBottomColor,
-                                    ImGuiManager* imgui) {
+void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, const FrameData& frame) {
     if (ctx.commandBuffers.size() != ctx.framebuffers.size()) {
         if (!ctx.commandBuffers.empty()) {
             vkFreeCommandBuffers(ctx.device, ctx.commandPool,
@@ -806,6 +799,13 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
         glm::vec4 topColor;
         glm::vec4 bottomColor;
     };
+
+    const auto& targetPositions = *frame.targetPositions;
+    const auto& targetScales = *frame.targetScales;
+    const auto& targetMaterials = *frame.targetMaterials;
+    const glm::vec3& lightDir = frame.lighting.lightDir;
+    const glm::vec4& skyTopColor = frame.lighting.skyTopColor;
+    const glm::vec4& skyBottomColor = frame.lighting.skyBottomColor;
 
     VkCommandBuffer cmd = ctx.commandBuffers[imageIndex];
 
@@ -863,29 +863,32 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
         vkCmdDraw(cmd, groundVertexCount, 1, 0, 0);
     }
 
-    // 阴影
-    for (size_t t = 0; t < targetPositions.size(); t++) {
-        glm::vec3 pos = targetPositions[t];
-        float scale = targetScales[t];
-        float heightAboveGround = pos.y - (-2.0f) - 0.5f * scale;
-        glm::vec3 shadowOffset(0.0f);
-        if (fabs(lightDir.y) > 0.001f) {
-            float shadowScale = 0.25f;
-            shadowOffset = -glm::vec3(lightDir.x, 0.0f, lightDir.z) * (heightAboveGround / lightDir.y) * shadowScale;
-        }
-        glm::vec3 shadowPos = glm::vec3(pos.x, -1.98f, pos.z) + shadowOffset;
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), shadowPos);
-        model = glm::scale(model, glm::vec3(scale, 1.0f, scale));
-
+    // 阴影（buffer 只 bind 一次）
+    if (!targetPositions.empty()) {
         vkCmdBindVertexBuffers(cmd, 0, 1, &shadowVertexBuffer, offsets);
-        ObjectPushData push;
-        push.model = model;
-        push.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-        push.material = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
-        vkCmdPushConstants(cmd, pipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(ObjectPushData), &push);
-        vkCmdDraw(cmd, shadowVertexCount, 1, 0, 0);
+
+        for (size_t t = 0; t < targetPositions.size(); t++) {
+            glm::vec3 pos = targetPositions[t];
+            float scale = targetScales[t];
+            float heightAboveGround = pos.y - (-2.0f) - 0.5f * scale;
+            glm::vec3 shadowOffset(0.0f);
+            if (fabs(lightDir.y) > 0.001f) {
+                float shadowScale = 0.25f;
+                shadowOffset = -glm::vec3(lightDir.x, 0.0f, lightDir.z) * (heightAboveGround / lightDir.y) * shadowScale;
+            }
+            glm::vec3 shadowPos = glm::vec3(pos.x, -1.98f, pos.z) + shadowOffset;
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), shadowPos);
+            model = glm::scale(model, glm::vec3(scale, 1.0f, scale));
+
+            ObjectPushData push;
+            push.model = model;
+            push.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            push.material = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+            vkCmdPushConstants(cmd, pipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(ObjectPushData), &push);
+            vkCmdDraw(cmd, shadowVertexCount, 1, 0, 0);
+        }
     }
 
     // 球体
@@ -924,28 +927,17 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
         vkCmdDraw(cmd, crosshairVertexCount, 1, 0, 0);
     }
 
-    if (imgui) {
-        imgui->Render(cmd);
+    if (frame.imgui) {
+        frame.imgui->Render(cmd);
     }
 
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
 }
 
-// ============ DrawFrame ============
+// ============ DrawFrame（D1：接收 FrameData）============
 
-void Renderer::DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
-                         glm::vec3 cameraPos,
-                         const std::vector<glm::vec3>& targetPositions,
-                         const std::vector<float>& targetScales,
-                         const std::vector<Material>& targetMaterials,
-                         const glm::vec3& lightDir,
-                         const glm::vec3& lightColor,
-                         float lightIntensity,
-                         const glm::vec3& ambientColor,
-                         const glm::vec4& skyTopColor,
-                         const glm::vec4& skyBottomColor,
-                         ImGuiManager* imgui) {
+void Renderer::DrawFrame(VulkanContext& ctx, const FrameData& frame) {
     vkWaitForFences(ctx.device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
     uint32_t imageIndex;
@@ -972,15 +964,14 @@ void Renderer::DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
 
     // 更新本帧 UBO
     FrameUniforms ubo;
-    ubo.viewProj = proj * view;
-    ubo.cameraPos = glm::vec4(cameraPos, 0.0f);
-    ubo.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
-    ubo.lightColor = glm::vec4(lightColor, 0.0f);
-    ubo.ambientColor = glm::vec4(ambientColor, 0.0f);
+    ubo.viewProj = frame.proj * frame.view;
+    ubo.cameraPos = glm::vec4(frame.cameraPos, 0.0f);
+    ubo.lightDirAndIntensity = glm::vec4(frame.lighting.lightDir, frame.lighting.lightIntensity);
+    ubo.lightColor = glm::vec4(frame.lighting.lightColor, 0.0f);
+    ubo.ambientColor = glm::vec4(frame.lighting.ambientColor, 0.0f);
     memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
 
-    RecordCommandBuffer(ctx, imageIndex, lightDir, targetPositions, targetScales,
-                        targetMaterials, skyTopColor, skyBottomColor, imgui);
+    RecordCommandBuffer(ctx, imageIndex, frame);
 
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

@@ -1,10 +1,11 @@
 #pragma once
-#include <deque>
+
+class FrameTimeHistory;
 
 class PerformancePanel {
 public:
-    void Initialize(const std::deque<float>& frameTimes) { frameTimes_ = &frameTimes; }
+    void Initialize(const FrameTimeHistory& history) { history_ = &history; }
     void Draw();
 private:
-    const std::deque<float>* frameTimes_ = nullptr;
+    const FrameTimeHistory* history_ = nullptr;
 };

@@ -23,10 +23,25 @@ glm::vec3 Camera::GetDirection() const {
 }
 
 glm::mat4 Camera::GetViewMatrix() const {
+    // B1: yaw/pitch/position 都没变时返回缓存
+    if (hasCache_ &&
+        lastYaw_ == yaw &&
+        lastPitch_ == pitch &&
+        lastPosition_ == position) {
+        return cachedView_;
+    }
+
     glm::vec3 dir = GetDirection();
     glm::vec3 right = glm::normalize(glm::cross(dir, glm::vec3(0, 1, 0)));
     glm::vec3 up = glm::normalize(glm::cross(right, dir));
-    return glm::lookAt(position, position + dir, up);
+    cachedView_ = glm::lookAt(position, position + dir, up);
+
+    lastYaw_ = yaw;
+    lastPitch_ = pitch;
+    lastPosition_ = position;
+    hasCache_ = true;
+
+    return cachedView_;
 }
 
 glm::mat4 Camera::GetProjectionMatrix(float aspect) const {

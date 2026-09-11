@@ -14,8 +14,8 @@ class TargetManager {
 public:
     struct Target {
         glm::vec3 position;
-        glm::vec3 initialPosition;   // 用于正弦等基�?
-        float phase;                 // 每个目标的随机相�?
+        glm::vec3 initialPosition;   // 用于正弦等基准
+        float phase;                 // 每个目标的随机相位
         float scale;
         bool alive;
         int materialIndex;
@@ -39,7 +39,14 @@ public:
     void Spawn();
     void Update(float dt);
     void Shoot(glm::vec3 cameraPos, glm::vec3 direction);
-    std::vector<glm::vec3> GetAlivePositions() const;
-    std::vector<float> GetAliveScales() const;
+
+    // A3: 返回内部缓存的引用，零分配
+    const std::vector<glm::vec3>& GetAlivePositions() const;
+    const std::vector<float>& GetAliveScales() const;
     std::vector<int> GetAliveMaterialIndices() const;
+
+private:
+    // A3: 每次查询时重建。clear() 保留 capacity，所以稳定后零分配
+    mutable std::vector<glm::vec3> alivePositionsCache_;
+    mutable std::vector<float> aliveScalesCache_;
 };

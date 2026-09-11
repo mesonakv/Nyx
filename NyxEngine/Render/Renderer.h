@@ -2,6 +2,7 @@
 #include "../Core/VulkanContext.h"
 #include "../Core/ImGuiManager.h"
 #include "../Scene/Material.h"
+#include "FrameData.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
@@ -71,27 +72,9 @@ public:
     void CreateSyncObjects(VulkanContext& ctx);
     void DestroySyncObjects(VulkanContext& ctx);
 
-    void RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
-                             const glm::vec3& lightDir,
-                             const std::vector<glm::vec3>& targetPositions,
-                             const std::vector<float>& targetScales,
-                             const std::vector<Material>& targetMaterials,
-                             const glm::vec4& skyTopColor,
-                             const glm::vec4& skyBottomColor,
-                             ImGuiManager* imgui);
-
-    void DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
-                   glm::vec3 cameraPos,
-                   const std::vector<glm::vec3>& targetPositions,
-                   const std::vector<float>& targetScales,
-                   const std::vector<Material>& targetMaterials,
-                   const glm::vec3& lightDir,
-                   const glm::vec3& lightColor,
-                   float lightIntensity,
-                   const glm::vec3& ambientColor,
-                   const glm::vec4& skyTopColor,
-                   const glm::vec4& skyBottomColor,
-                   ImGuiManager* imgui);
+    // D1: 参数收敛成 FrameData
+    void RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, const FrameData& frame);
+    void DrawFrame(VulkanContext& ctx, const FrameData& frame);
 
     void Cleanup(VulkanContext& ctx);
 };

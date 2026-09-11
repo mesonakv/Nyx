@@ -208,11 +208,41 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
 
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+    // C1: 查询支持的 present mode，按优先级选
+    // Vsync 开启：优先 FIFO（有垂直同步）
+    // Vsync 关闭：优先 IMMEDIATE（无等待、无撕裂控制），退化到 MAILBOX，再退化到 FIFO
+    uint32_t presentModeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
+    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes.data());
+
+    auto hasPresentMode = [&](VkPresentModeKHR m) {
+        for (auto pm : presentModes) if (pm == m) return true;
+        return false;
+    };
+
+    VkPresentModeKHR chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;  // 保底，规范保证支持
+
     if (settings.vsync) {
-        sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        // 有垂直同步，FIFO 是标准选择
+        chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
     } else {
-        sci.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        if (hasPresentMode(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
+            chosenPresentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        } else if (hasPresentMode(VK_PRESENT_MODE_MAILBOX_KHR)) {
+            chosenPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        } else {
+            chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+        }
     }
+    sci.presentMode = chosenPresentMode;
+
+    NYX_LOG_INFO("Present mode: %s",
+                 chosenPresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" :
+                 chosenPresentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX" :
+                 chosenPresentMode == VK_PRESENT_MODE_FIFO_KHR ? "FIFO" : "OTHER");
+
     sci.clipped = VK_TRUE;
 
     if (vkCreateSwapchainKHR(device, &sci, nullptr, &swapchain) != VK_SUCCESS) {

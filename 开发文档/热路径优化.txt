@@ -1,0 +1,144 @@
+阶段 A：热路径优化（30 分钟，风险低）
+目标：减少每帧的系统调用和堆分配。
+
+A1. 标题拼接 + SDL_SetWindowTitle 优化
+
+文件：main.cpp
+
+改动：缓存上次的标题字符串，只有内容变化时才拼接和调用
+
+收益：每秒省 2000 次系统调用 + 9 次堆分配
+
+A2. SDL_GetWindowDisplayMode 缓存
+
+文件：main.cpp
+
+改动：只在窗口事件后查询，缓存到变量
+
+收益：每秒省 2000 次系统调用
+
+A3. TargetManager::GetAlive* 改传引用
+
+文件：TargetManager.h/.cpp、Renderer.h/.cpp、main.cpp
+
+改动：三个函数改成 void GetAlivePositions(std::vector<...>& out)
+
+收益：每帧省 3 次堆分配 + N 次拷贝
+
+注意：这会改 Renderer::DrawFrame 的签名
+
+A4. 阴影循环提取 vkCmdBindVertexBuffers
+
+文件：Renderer.cpp
+
+改动：同一个 buffer 只 bind 一次
+
+收益：省 N 次命令录制
+
+阶段 A 结束 → git 提交 → 验证 StdDev 是否下降
+
+阶段 B：局部优化（1 小时，风险低）
+目标：减少每帧的重复计算。
+
+B1. Camera 缓存 view matrix
+
+文件：Camera.h/.cpp
+
+改动：加 dirty 标志，yaw/pitch/position 变化时才重算
+
+收益：视角不动时省 2 次 cross + 2 次 normalize + 1 次 lookAt
+
+B2. frameTimes 改 ring buffer
+
+文件：main.cpp
+
+改动：std::deque 换成固定大小数组 + 索引
+
+收益：零分配，零指针追逐
+
+B3. Logger 文件输出缓冲
+
+文件：Logger.cpp
+
+改动：不每条 flush，改为每 N 条或每帧 flush 一次
+
+收益：toFile = true 时不会被 flush 拖死
+
+阶段 B 结束 → git 提交 → 验证
+
+阶段 C：Vulkan 健壮性（15 分钟，风险低）
+目标：消除潜在崩溃点。
+
+C1. present mode 查询支持
+
+文件：VulkanContext.cpp
+
+改动：创建 swapchain 前查询支持的 present mode，按 MAILBOX > IMMEDIATE > FIFO 优先级选
+
+收益：某些驱动/平台上不会因为不支持 IMMEDIATE 而崩溃
+
+阶段 C 结束 → git 提交
+
+阶段 D：架构重构（半天，风险中）
+目标：为 Terra 铺路，让 main.cpp 瘦身。
+
+D1. Renderer 参数收敛 → FrameData
+
+文件：Renderer.h/.cpp、main.cpp
+
+改动：DrawFrame 的 14 个参数收敛成一个结构体
+
+收益：调用清晰，加参数不痛
+
+D2. Material name 优化
+
+文件：Material.h/.cpp、Renderer.cpp、EditorPanel、main.cpp
+
+改动：std::string name 改成 const char* 或枚举，或者用字符串池
+
+收益：拷贝 Material 不再拷贝字符串
+
+D3. 拆 Game 层
+
+新建：Game/MyGame.h/.cpp
+
+文件：main.cpp（瘦身到 100~150 行）
+
+改动：把 TargetManager、编辑器状态、显示设置管理都收进 MyGame
+
+收益：main.cpp 变成启动器；Terra 可以平行做 TerraGame
+
+阶段 D 结束 → git 提交
+
+阶段 E：Resource 系统（1~2 天，独立模块）
+这不是优化，是新模块。
+
+Resource 系统包含：
+
+资源句柄（引用计数）
+
+异步加载
+
+缓存
+
+资源类型注册
+
+它的第一个用户是"把 Renderer 里硬编码的 mesh 搬出来"。做完之后：
+
+Mesh 从文件加载（而不是代码生成）
+
+Shader 从文件加载（已经是）
+
+未来 Terra 的瓦片可以从文件加载
+
+这一步依赖 JobSystem（已有）和 FileSystem（已有）。
+
+阶段 E 结束 → git 提交 → 训练器可以开始用真实资源
+
+顺序总结
+阶段	内容	时间	风险
+A	热路径优化（4 项）	30 分钟	低
+B	局部优化（3 项）	1 小时	低
+C	Vulkan 健壮性	15 分钟	低
+D	架构重构（3 项）	半天	中
+E	Resource 系统	1~2 天	中

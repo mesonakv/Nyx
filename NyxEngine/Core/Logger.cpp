@@ -21,6 +21,7 @@ struct LoggerState {
     std::mutex mutex;
     std::ofstream fileStream;
     bool initialized = false;
+	uint32_t pendingFlushes = 0;   // B3: 文件 flush 计数
 };
 
 LoggerState& GetState() {
@@ -152,7 +153,11 @@ void Logger::Log(LogLevel level, const char* file, int line, const char* fmt, ..
 
     if (state.config.toFile && state.fileStream.is_open()) {
         state.fileStream << finalLine << "\n";
-        // 每条 flush，崩溃时日志不会丢
-        state.fileStream.flush();
+        // B3: 每 64 条 flush 一次
+        state.pendingFlushes++;
+        if (state.pendingFlushes >= 64) {
+            state.fileStream.flush();
+            state.pendingFlushes = 0;
+        }
     }
 }

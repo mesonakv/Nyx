@@ -78,20 +78,21 @@ void TargetManager::Shoot(glm::vec3 cameraPos, glm::vec3 direction) {
     }
 }
 
-std::vector<glm::vec3> TargetManager::GetAlivePositions() const {
-    std::vector<glm::vec3> positions;
-    for (auto& t : targets) {
-        if (t.alive) positions.push_back(t.position);
+// A3: 重建内部缓存，返回引用
+const std::vector<glm::vec3>& TargetManager::GetAlivePositions() const {
+    alivePositionsCache_.clear();
+    for (const auto& t : targets) {
+        if (t.alive) alivePositionsCache_.push_back(t.position);
     }
-    return positions;
+    return alivePositionsCache_;
 }
 
-std::vector<float> TargetManager::GetAliveScales() const {
-    std::vector<float> scales;
-    for (auto& t : targets) {
-        if (t.alive) scales.push_back(t.scale);
+const std::vector<float>& TargetManager::GetAliveScales() const {
+    aliveScalesCache_.clear();
+    for (const auto& t : targets) {
+        if (t.alive) aliveScalesCache_.push_back(t.scale);
     }
-    return scales;
+    return aliveScalesCache_;
 }
 
 std::vector<int> TargetManager::GetAliveMaterialIndices() const {

@@ -7,10 +7,10 @@ void MaterialPanel::Draw() {
     if (!materials_ || !targets_) return;
 
     if (ImGui::CollapsingHeader("Material")) {
-        if (ImGui::BeginCombo("Preset", materials_->GetSelected().name.c_str())) {
+        if (ImGui::BeginCombo("Preset", materials_->GetSelected().name)) {
             for (int i = 0; i < (int)materials_->materials.size(); i++) {
                 bool selected = (materials_->selectedIndex == i);
-                if (ImGui::Selectable(materials_->materials[i].name.c_str(), selected)) {
+                if (ImGui::Selectable(materials_->materials[i].name, selected)) {
                     materials_->selectedIndex = i;
                     targets_->currentMaterialIndex = i;
                 }

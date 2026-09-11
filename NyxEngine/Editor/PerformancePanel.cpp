@@ -1,23 +1,30 @@
 #include "PerformancePanel.h"
+#include "../Core/FrameTimeHistory.h"
 #include <imgui.h>
 #include <vector>
 #include <algorithm>
-#include <numeric>
 #include <cmath>
 
 void PerformancePanel::Draw() {
-    if (!frameTimes_) return;
+    if (!history_) return;
 
     if (ImGui::CollapsingHeader("Performance")) {
-        if (!frameTimes_->empty()) {
-            float sum = std::accumulate(frameTimes_->begin(), frameTimes_->end(), 0.0f);
-            float avg = sum / frameTimes_->size();
+        if (!history_->empty()) {
+            const float* data = history_->data();
+            const size_t count = history_->size();
+
+            float sum = 0.0f;
+            for (size_t i = 0; i < count; i++) sum += data[i];
+            float avg = sum / (float)count;
 
             float sq_sum = 0.0f;
-            for (float t : *frameTimes_) sq_sum += (t - avg) * (t - avg);
-            float stddev = std::sqrt(sq_sum / frameTimes_->size());
+            for (size_t i = 0; i < count; i++) {
+                float d = data[i] - avg;
+                sq_sum += d * d;
+            }
+            float stddev = std::sqrt(sq_sum / (float)count);
 
-            std::vector<float> sorted(frameTimes_->begin(), frameTimes_->end());
+            std::vector<float> sorted(data, data + count);
             std::sort(sorted.begin(), sorted.end());
 
             size_t p99_index = (size_t)(sorted.size() * 0.99);

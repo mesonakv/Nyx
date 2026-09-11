@@ -6,12 +6,12 @@
 #include "LightingPanel.h"
 #include "PerformancePanel.h"
 #include <SDL.h>
-#include <deque>
 #include <vector>
 
 class Camera;
 class MaterialLibrary;
 class TargetManager;
+class FrameTimeHistory;
 struct EngineConfig;
 struct DisplaySettings;
 
@@ -24,7 +24,7 @@ public:
         EngineConfig* config = nullptr;
         DisplaySettings* pendingSettings = nullptr;
         const std::vector<SDL_DisplayMode>* displayModes = nullptr;
-        const std::deque<float>* frameTimes = nullptr;
+        const FrameTimeHistory* frameTimes = nullptr;
         bool* pendingDisplayChange = nullptr;
     };
 
