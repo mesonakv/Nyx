@@ -8,66 +8,14 @@
 #include <deque>
 #include <numeric>
 
+#include "NyxEngine/NyxEngine.h"
 #include "NyxEngine/Core/VulkanContext.h"
-#include "NyxEngine/Core/ImGuiManager.h"
-#include "NyxEngine/Render/Renderer.h"
-#include "NyxEngine/Scene/Camera.h"
 #include "NyxEngine/Scene/Material.h"
+#include "NyxEngine/Editor/EditorPanel.h"
 #include "Game/Target/TargetManager.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_sdl2.h>
-
-// ============ 天空渐变关键帧 ============
-
-struct SkyKeyframe {
-    float t;
-    glm::vec4 top;
-    glm::vec4 bottom;
-};
-
-static const glm::vec4 kNoonTop    (0.2f,  0.5f,  1.0f,  1.0f);
-static const glm::vec4 kNoonBottom (0.7f,  0.8f,  1.0f,  1.0f);
-static const glm::vec4 kNightTop   (0.01f, 0.01f, 0.08f, 1.0f);
-static const glm::vec4 kNightBottom(0.08f, 0.08f, 0.2f,  1.0f);
-static const glm::vec4 kDuskTop    (0.15f, 0.1f,  0.3f,  1.0f);
-static const glm::vec4 kDuskBottom (1.0f,  0.5f,  0.2f,  1.0f);
-
-static const SkyKeyframe kSkyKeyframes[] = {
-    {0.00f, kNightTop, kNightBottom},
-    {0.21f, kNightTop, kNightBottom},
-    {0.25f, kDuskTop,  kDuskBottom},
-    {0.29f, kNoonTop,  kNoonBottom},
-    {0.71f, kNoonTop,  kNoonBottom},
-    {0.75f, kDuskTop,  kDuskBottom},
-    {0.79f, kNightTop, kNightBottom},
-    {1.00f, kNightTop, kNightBottom},
-};
-static const int kSkyKeyframeCount = sizeof(kSkyKeyframes) / sizeof(kSkyKeyframes[0]);
-
-void SampleSkyGradient(float t, glm::vec4& outTop, glm::vec4& outBottom) {
-    if (t <= kSkyKeyframes[0].t) {
-        outTop = kSkyKeyframes[0].top;
-        outBottom = kSkyKeyframes[0].bottom;
-        return;
-    }
-    if (t >= kSkyKeyframes[kSkyKeyframeCount - 1].t) {
-        outTop = kSkyKeyframes[kSkyKeyframeCount - 1].top;
-        outBottom = kSkyKeyframes[kSkyKeyframeCount - 1].bottom;
-        return;
-    }
-    for (int i = 0; i < kSkyKeyframeCount - 1; i++) {
-        if (t >= kSkyKeyframes[i].t && t <= kSkyKeyframes[i + 1].t) {
-            float span = kSkyKeyframes[i + 1].t - kSkyKeyframes[i].t;
-            float f = (span > 0.0001f) ? (t - kSkyKeyframes[i].t) / span : 0.0f;
-            outTop = glm::mix(kSkyKeyframes[i].top, kSkyKeyframes[i + 1].top, f);
-            outBottom = glm::mix(kSkyKeyframes[i].bottom, kSkyKeyframes[i + 1].bottom, f);
-            return;
-        }
-    }
-    outTop = kSkyKeyframes[0].top;
-    outBottom = kSkyKeyframes[0].bottom;
-}
 
 std::vector<SDL_DisplayMode> GetAvailableDisplayModes() {
     std::vector<SDL_DisplayMode> modes;
@@ -85,6 +33,7 @@ std::vector<SDL_DisplayMode> GetAvailableDisplayModes() {
 }
 
 int main(int argc, char* argv[]) {
+    // ============ 平台初始化 ============
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     SDL_Init(SDL_INIT_VIDEO);
     SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
@@ -102,20 +51,16 @@ int main(int argc, char* argv[]) {
         displaySettings.width, displaySettings.height,
         SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
-    VulkanContext vk;
-    vk.Initialize(window, displaySettings);
+    // ============ 引擎实例 ============
+    NyxEngine engine;
+    engine.Initialize(window, displaySettings);
 
-    ImGuiManager imgui;
-    imgui.Initialize(window, vk);
+    // 引用（让下面的代码更短）
+    InputSystem& input = engine.GetInput();
+    Camera& camera = engine.GetCamera();
+    EngineConfig& config = engine.GetConfig();
 
-    Renderer renderer;
-    renderer.Initialize(vk, window);
-
-    Camera camera;
-    camera.position = glm::vec3(0.0f, 1.5f, 8.0f);
-    camera.pitch = 0.15f;
-    camera.yaw = 0.0f;
-
+    // ============ Game 层 ============
     MaterialLibrary materials;
     materials.LoadDefaults();
 
@@ -123,42 +68,18 @@ int main(int argc, char* argv[]) {
     targets.currentMaterialIndex = materials.selectedIndex;
     targets.Spawn();
 
-    SDL_SetRelativeMouseMode(SDL_TRUE);
-
-    auto displayModes = GetAvailableDisplayModes();
-    std::vector<std::pair<int,int>> uniqueResolutions;
-    for (auto& m : displayModes) {
-        auto res = std::make_pair(m.w, m.h);
-        if (std::find(uniqueResolutions.begin(), uniqueResolutions.end(), res) == uniqueResolutions.end()) {
-            uniqueResolutions.push_back(res);
-        }
-    }
-
-    std::vector<int> currentRefreshRates;
-    auto updateRefreshRates = [&](int width, int height) {
-        currentRefreshRates.clear();
-        for (auto& m : displayModes) {
-            if (m.w == width && m.h == height) {
-                if (std::find(currentRefreshRates.begin(), currentRefreshRates.end(), m.refresh_rate) == currentRefreshRates.end()) {
-                    currentRefreshRates.push_back(m.refresh_rate);
-                }
-            }
-        }
-    };
-    updateRefreshRates(vk.settings.width, vk.settings.height);
-
-    bool running = true;
-    SDL_Event event;
-    uint32_t lastShotTime = 0;
+    // ============ 编辑器状态 ============
     bool editorMode = false;
     bool pendingDisplayChange = false;
+    DisplaySettings pendingSettings = engine.GetVulkanContext().settings;
+    auto displayModes = GetAvailableDisplayModes();
+
     bool windowMinimized = false;
     bool swapchainDestroyed = false;
     bool exclusiveFullscreenSuspended = false;
-    DisplaySettings pendingSettings = vk.settings;
-
-    float timeOfDay = 0.5f;
-    float ambientStrength = 0.35f;   // T2.4: 环境光强度
+    bool running = true;
+    SDL_Event event;
+    uint32_t lastShotTime = 0;
 
     uint32_t frameCount = 0;
     uint32_t fpsTimer = 0;
@@ -170,6 +91,22 @@ int main(int argc, char* argv[]) {
     uint64_t frameStartCounter = 0;
     uint64_t lastFrameCounter = SDL_GetPerformanceCounter();
 
+    // ============ EditorPanel ============
+    EditorPanel editor;
+    {
+        EditorPanel::Context ctx;
+        ctx.camera = &camera;
+        ctx.materials = &materials;
+        ctx.targets = &targets;
+        ctx.config = &config;
+        ctx.pendingSettings = &pendingSettings;
+        ctx.displayModes = &displayModes;
+        ctx.frameTimes = &frameTimes;
+        ctx.pendingDisplayChange = &pendingDisplayChange;
+        editor.Initialize(ctx);
+    }
+
+    // ============ 主循环 ============
     while (running) {
         frameStartCounter = SDL_GetPerformanceCounter();
 
@@ -178,13 +115,11 @@ int main(int argc, char* argv[]) {
         lastFrameCounter = currentFrameCounter;
         if (dt > 0.1f) dt = 0.1f;
 
+        engine.BeginFrame();
+
+        // ---------- 事件 ----------
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) running = false;
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) running = false;
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F1) {
-                editorMode = !editorMode;
-                SDL_SetRelativeMouseMode(editorMode ? SDL_FALSE : SDL_TRUE);
-            }
+            input.ProcessEvent(event);
 
             if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_MINIMIZED) {
@@ -193,37 +128,50 @@ int main(int argc, char* argv[]) {
                     windowMinimized = false;
                     if (swapchainDestroyed) pendingDisplayChange = true;
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
-                    if (vk.settings.windowMode == WindowMode::ExclusiveFullscreen) {
+                    if (engine.GetVulkanContext().settings.windowMode == WindowMode::ExclusiveFullscreen) {
                         exclusiveFullscreenSuspended = true;
                     }
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
                     windowMinimized = false;
                     if (swapchainDestroyed) pendingDisplayChange = true;
                     if (exclusiveFullscreenSuspended) {
-                        pendingSettings = vk.settings;
+                        pendingSettings = engine.GetVulkanContext().settings;
                         pendingDisplayChange = true;
                         exclusiveFullscreenSuspended = false;
                     }
                 }
             }
 
-            if (!editorMode && event.type == SDL_MOUSEMOTION) {
-                camera.ProcessMouseDelta((float)event.motion.xrel, (float)event.motion.yrel);
-            }
             ImGui_ImplSDL2_ProcessEvent(&event);
         }
 
+        // ---------- 输入业务逻辑 ----------
+        if (input.ShouldQuit()) running = false;
+        if (input.WasKeyPressed(SDL_SCANCODE_ESCAPE)) running = false;
+        if (input.WasKeyPressed(SDL_SCANCODE_F1)) {
+            editorMode = !editorMode;
+            input.SetMouseCaptured(!editorMode);
+        }
+
+        if (!editorMode) {
+            camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());
+        }
+
+        // ---------- 最小化分支 ----------
         if (windowMinimized) {
             if (!swapchainDestroyed) {
-                vkDeviceWaitIdle(vk.device);
-                vk.DestroySwapchainResources();
+                vkDeviceWaitIdle(engine.GetVulkanContext().device);
+                engine.GetVulkanContext().DestroySwapchainResources();
                 swapchainDestroyed = true;
             }
             SDL_Delay(50);
+            engine.EndFrame();
             continue;
         }
 
+        // ---------- 显示设置变更 ----------
         if (pendingDisplayChange) {
+            VulkanContext& vk = engine.GetVulkanContext();
             vk.settings = pendingSettings;
 
             bool useExclusive = (vk.settings.windowMode == WindowMode::ExclusiveFullscreen);
@@ -261,33 +209,29 @@ int main(int argc, char* argv[]) {
             }
 
             vk.RecreateSwapchain(window);
-            renderer.RecreatePipeline(vk);
-            imgui.RecreatePipeline(vk);
+            engine.GetRenderer().RecreatePipeline(vk);
+            engine.GetImGuiManager().RecreatePipeline(vk);
             swapchainDestroyed = false;
 
-            if (!editorMode) {
-                SDL_SetRelativeMouseMode(SDL_FALSE);
-                SDL_SetRelativeMouseMode(SDL_TRUE);
-                SDL_WarpMouseInWindow(window, vk.settings.width / 2, vk.settings.height / 2);
-            }
             pendingDisplayChange = false;
         }
 
-        const Uint8* keyState = SDL_GetKeyboardState(nullptr);
+        // ---------- Game 逻辑 ----------
         uint32_t currentTime = SDL_GetTicks();
 
         if (!editorMode) {
-            if (keyState[SDL_SCANCODE_SPACE] && currentTime - lastShotTime > 200) {
+            if (input.IsKeyDown(SDL_SCANCODE_SPACE) && currentTime - lastShotTime > 200) {
                 targets.Shoot(camera.position, camera.GetDirection());
                 lastShotTime = currentTime;
             }
-            if (keyState[SDL_SCANCODE_R]) {
+            if (input.IsKeyDown(SDL_SCANCODE_R)) {
                 targets.Spawn();
                 targets.currentMaterialIndex = materials.selectedIndex;
             }
             targets.Update(dt);
         }
 
+        // ---------- FPS 统计 ----------
         frameCount++;
         uint32_t now = SDL_GetTicks();
         if (now - fpsTimer >= 500) {
@@ -304,191 +248,16 @@ int main(int argc, char* argv[]) {
                             "@" + std::to_string(actualMode.refresh_rate) + "Hz";
         SDL_SetWindowTitle(window, title.c_str());
 
-        // ============ 光照计算 ============
-        float sunAngle = (timeOfDay - 0.25f) * 2.0f * 3.14159f;
-        glm::vec3 lightDir = glm::normalize(glm::vec3(cos(sunAngle), sin(sunAngle), 0.3f));
-        float daylight = std::max(0.0f, sin(sunAngle));
-        float moonlight = std::max(0.0f, -sin(sunAngle));
-        float lightIntensity = daylight * 3.0f + moonlight * 0.8f;
-        glm::vec3 lightColor = glm::mix(
-            glm::vec3(0.35f, 0.45f, 1.0f),
-            glm::vec3(1.0f, 0.95f, 0.85f),
-            daylight / std::max(daylight + moonlight, 0.01f)
-        );
+        // ---------- 光照 ----------
+        LightingData lightingData = engine.GetLighting().Update();
 
-        // ============ 天空颜色 ============
-        glm::vec4 skyTopColor;
-        glm::vec4 skyBottomColor;
-        SampleSkyGradient(timeOfDay, skyTopColor, skyBottomColor);
-
-		// ============ 环境光（T2.4）============
-		// 从天空颜色取平均，乘以强度。白天接近 0.4，夜晚很暗。
-		glm::vec3 skyBottomRgb(skyBottomColor.r, skyBottomColor.g, skyBottomColor.b);
-		glm::vec3 skyTopRgb(skyTopColor.r, skyTopColor.g, skyTopColor.b);
-		glm::vec3 skyAvg = glm::mix(skyBottomRgb, skyTopRgb, 0.5f);
-		glm::vec3 ambientColor = skyAvg * ambientStrength;
-
-        imgui.NewFrame();
-
+        // ---------- 编辑器 ----------
+        engine.GetImGuiManager().NewFrame();
         if (editorMode) {
-            ImGui::Begin("Nyx Editor");
-
-            if (ImGui::CollapsingHeader("Camera")) {
-                ImGui::SliderFloat("Sensitivity", &camera.sensitivity, 0.0001f, 0.01f, "%.5f");
-                ImGui::SliderFloat("FOV", &camera.fov, 30.0f, 120.0f);
-            }
-
-            if (ImGui::CollapsingHeader("Material")) {
-                if (ImGui::BeginCombo("Preset", materials.GetSelected().name.c_str())) {
-                    for (int i = 0; i < (int)materials.materials.size(); i++) {
-                        bool selected = (materials.selectedIndex == i);
-                        if (ImGui::Selectable(materials.materials[i].name.c_str(), selected)) {
-                            materials.selectedIndex = i;
-                            targets.currentMaterialIndex = i;
-                        }
-                        if (selected) ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-
-                Material& mat = materials.GetSelected();
-                ImGui::ColorEdit4("Color", &mat.color.x);
-                ImGui::SliderFloat("Metallic", &mat.metallic, 0.0f, 1.0f);
-                ImGui::SliderFloat("Roughness", &mat.roughness, 0.0f, 1.0f);
-                ImGui::SliderFloat("Emissive", &mat.emissive_strength, 0.0f, 5.0f);
-                ImGui::SliderFloat("Opacity", &mat.opacity, 0.0f, 1.0f);
-                ImGui::SliderFloat("Reflectance", &mat.reflectance, 0.0f, 1.0f);
-
-                if (ImGui::Button("Apply Material to All Targets")) {
-                    for (auto& t : targets.targets) t.materialIndex = materials.selectedIndex;
-                }
-                if (ImGui::Button("Reset Targets")) {
-                    targets.currentMaterialIndex = materials.selectedIndex;
-                    targets.Spawn();
-                }
-            }
-
-            if (ImGui::CollapsingHeader("Target Movement")) {
-                const char* movementNames[] = {"Static", "Linear", "Sine Wave", "Random Direction"};
-                int currentMovement = (int)targets.movementType;
-                if (ImGui::Combo("Type", &currentMovement, movementNames, 4)) {
-                    targets.movementType = (MovementType)currentMovement;
-                    targets.Spawn();
-                }
-                ImGui::SliderFloat("Speed", &targets.moveSpeed, 0.0f, 10.0f);
-                if (targets.movementType == MovementType::SineWave) {
-                    ImGui::SliderFloat("Amplitude", &targets.sineAmplitude, 0.1f, 5.0f);
-                    ImGui::SliderFloat("Frequency", &targets.sineFrequency, 0.1f, 5.0f);
-                } else if (targets.movementType == MovementType::RandomDirection) {
-                    ImGui::SliderFloat("Change Interval", &targets.randomChangeInterval, 0.5f, 5.0f);
-                }
-            }
-
-            if (ImGui::CollapsingHeader("Display")) {
-                ImGui::Text("Settings are applied when you press Apply");
-
-                std::string currentRes = std::to_string(pendingSettings.width) + "x" + std::to_string(pendingSettings.height);
-                if (ImGui::BeginCombo("Resolution", currentRes.c_str())) {
-                    for (auto& res : uniqueResolutions) {
-                        std::string label = std::to_string(res.first) + "x" + std::to_string(res.second);
-                        bool selected = (pendingSettings.width == res.first && pendingSettings.height == res.second);
-                        if (ImGui::Selectable(label.c_str(), selected)) {
-                            pendingSettings.width = res.first;
-                            pendingSettings.height = res.second;
-                            pendingSettings.refreshRate = 0;
-                            updateRefreshRates(pendingSettings.width, pendingSettings.height);
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                std::string currentHz = (pendingSettings.refreshRate == 0) ? "Default" : std::to_string(pendingSettings.refreshRate) + "Hz";
-                if (ImGui::BeginCombo("Refresh Rate", currentHz.c_str())) {
-                    for (int rate : currentRefreshRates) {
-                        std::string label = (rate == 0 ? "Default" : std::to_string(rate) + "Hz");
-                        bool selected = (pendingSettings.refreshRate == rate);
-                        if (ImGui::Selectable(label.c_str(), selected)) {
-                            pendingSettings.refreshRate = rate;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                const char* windowModeNames[] = {"Windowed", "Borderless", "Exclusive Fullscreen"};
-                int currentModeIndex = (int)pendingSettings.windowMode;
-                if (ImGui::Combo("Window Mode", &currentModeIndex, windowModeNames, 3)) {
-                    pendingSettings.windowMode = (WindowMode)currentModeIndex;
-                }
-
-                ImGui::Checkbox("VSync", &pendingSettings.vsync);
-
-                const char* msaaNames[] = {"Off", "2x", "4x", "8x"};
-                int msaaIndex = 0;
-                switch (pendingSettings.msaaSamples) {
-                    case 1: msaaIndex = 0; break;
-                    case 2: msaaIndex = 1; break;
-                    case 4: msaaIndex = 2; break;
-                    case 8: msaaIndex = 3; break;
-                }
-                if (ImGui::Combo("MSAA", &msaaIndex, msaaNames, 4)) {
-                    switch (msaaIndex) {
-                        case 0: pendingSettings.msaaSamples = 1; break;
-                        case 1: pendingSettings.msaaSamples = 2; break;
-                        case 2: pendingSettings.msaaSamples = 4; break;
-                        case 3: pendingSettings.msaaSamples = 8; break;
-                    }
-                }
-
-                if (ImGui::Button("Apply Settings")) {
-                    pendingDisplayChange = true;
-                }
-            }
-
-            if (ImGui::CollapsingHeader("Lighting")) {
-                ImGui::SliderFloat("Time of Day", &timeOfDay, 0.0f, 1.0f);
-                ImGui::SliderFloat("Ambient", &ambientStrength, 0.0f, 1.0f);
-                if (ImGui::Button("Set Noon")) timeOfDay = 0.5f;
-                ImGui::SameLine();
-                if (ImGui::Button("Set Midnight")) timeOfDay = 0.0f;
-                ImGui::SameLine();
-                if (ImGui::Button("Set Dawn")) timeOfDay = 0.25f;
-                ImGui::SameLine();
-                if (ImGui::Button("Set Dusk")) timeOfDay = 0.75f;
-            }
-
-            if (ImGui::CollapsingHeader("Performance")) {
-                if (!frameTimes.empty()) {
-                    float sum = std::accumulate(frameTimes.begin(), frameTimes.end(), 0.0f);
-                    float avg = sum / frameTimes.size();
-
-                    float sq_sum = 0.0f;
-                    for (float t : frameTimes) sq_sum += (t - avg) * (t - avg);
-                    float stddev = std::sqrt(sq_sum / frameTimes.size());
-
-                    std::vector<float> sorted(frameTimes.begin(), frameTimes.end());
-                    std::sort(sorted.begin(), sorted.end());
-
-                    size_t p99_index = (size_t)(sorted.size() * 0.99);
-                    if (p99_index >= sorted.size()) p99_index = sorted.size() - 1;
-                    float p99 = sorted[p99_index];
-
-                    size_t worst_count = std::max<size_t>(1, sorted.size() / 100);
-                    float worst_sum = 0.0f;
-                    for (size_t i = sorted.size() - worst_count; i < sorted.size(); ++i) worst_sum += sorted[i];
-                    float worst1pct = worst_sum / worst_count;
-
-                    ImGui::Text("Avg: %.3f ms", avg);
-                    ImGui::Text("P99: %.3f ms", p99);
-                    ImGui::Text("Worst 1%% avg: %.3f ms", worst1pct);
-                    ImGui::Text("StdDev: %.3f ms", stddev);
-                } else {
-                    ImGui::Text("Collecting frame data...");
-                }
-            }
-
-            ImGui::End();
+            editor.Draw();
         }
 
+        // ---------- 渲染 ----------
         std::vector<Material> targetMaterials;
         for (auto& t : targets.targets) {
             if (t.alive) {
@@ -498,23 +267,28 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        VulkanContext& vk = engine.GetVulkanContext();
         float aspect = (float)vk.swapchainExtent.width / (float)vk.swapchainExtent.height;
-        renderer.DrawFrame(vk, camera.GetViewMatrix(), camera.GetProjectionMatrix(aspect),
+        engine.GetRenderer().DrawFrame(vk,
+                   camera.GetViewMatrix(), camera.GetProjectionMatrix(aspect),
                    camera.position,
                    targets.GetAlivePositions(), targets.GetAliveScales(), targetMaterials,
-                   lightDir, lightColor, lightIntensity,
-                   ambientColor,
-                   skyTopColor, skyBottomColor, &imgui);
+                   lightingData.lightDir, lightingData.lightColor, lightingData.lightIntensity,
+                   lightingData.ambientColor,
+                   lightingData.skyTopColor, lightingData.skyBottomColor,
+                   &engine.GetImGuiManager());
 
+        // ---------- 帧计时 ----------
         uint64_t frameEndCounter = SDL_GetPerformanceCounter();
         float frameTimeMs = (float)((frameEndCounter - frameStartCounter) * 1000.0 / performanceFrequency);
         frameTimes.push_back(frameTimeMs);
         if (frameTimes.size() > maxFrameTimes) frameTimes.pop_front();
+
+        engine.EndFrame();
     }
 
-    renderer.Cleanup(vk);
-    imgui.Cleanup(vk);
-    vk.Cleanup();
+    // ============ 退出 ============
+    engine.Shutdown();
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
