@@ -193,6 +193,19 @@ static void FormatDoubleTo(std::string& out, double v) {
         return;
     }
 
+    // 如果这个 double 能用 float 精确表示（即从 float 转来），
+    // 就用 float 精度输出，避免 "3.141590118408203" 这种丑值
+    float f = (float)v;
+    if ((double)f == v) {
+        char buf[32];
+        auto result = std::to_chars(buf, buf + sizeof(buf), f);
+        if (result.ec == std::errc()) {
+            out.append(buf, result.ptr);
+            return;
+        }
+    }
+
+    // 用 double 精度输出
     char buf[32];
     auto result = std::to_chars(buf, buf + sizeof(buf), v);
     if (result.ec == std::errc()) {
