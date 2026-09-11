@@ -35,19 +35,20 @@ public:
     VkDeviceMemory shadowVertexBufferMemory = VK_NULL_HANDLE;
     uint32_t shadowVertexCount = 0;
 
-    // 每帧一个（大小 MAX_FRAMES_IN_FLIGHT）
+    std::vector<VkBuffer> uniformBuffers;
+    std::vector<VkDeviceMemory> uniformBufferMemories;
+    std::vector<void*> uniformBuffersMapped;
+
+    VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> descriptorSets;
+
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkFence> inFlightFences;
-
-    // 每张 swapchain image 一个
     std::vector<VkSemaphore> renderFinishedSemaphores;
-
-    // 追踪每张 swapchain image 当前被哪个 inFlightFence 占用
     std::vector<VkFence> imagesInFlight;
 
     uint32_t currentFrame = 0;
-
-    // 用于 swapchain 重建
     SDL_Window* window = nullptr;
 
     void Initialize(VulkanContext& ctx, SDL_Window* window);
@@ -56,6 +57,13 @@ public:
     void CreateGroundMesh(VulkanContext& ctx);
     void CreateShadowMesh(VulkanContext& ctx);
     void CreateSkyMesh(VulkanContext& ctx);
+
+    void CreateDescriptorSetLayout(VulkanContext& ctx);
+    void CreateUniformBuffers(VulkanContext& ctx);
+    void CreateDescriptorPool(VulkanContext& ctx);
+    void CreateDescriptorSets(VulkanContext& ctx);
+    void DestroyUniformResources(VulkanContext& ctx);
+
     void CreateGraphicsPipeline(VulkanContext& ctx);
     void CreateSkyPipeline(VulkanContext& ctx);
     void RecreatePipeline(VulkanContext& ctx);
@@ -64,24 +72,23 @@ public:
     void DestroySyncObjects(VulkanContext& ctx);
 
     void RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
-                             glm::mat4 view, glm::mat4 proj,
+                             const glm::vec3& lightDir,
                              const std::vector<glm::vec3>& targetPositions,
                              const std::vector<float>& targetScales,
                              const std::vector<Material>& targetMaterials,
-                             const glm::vec3& lightDir,
-                             const glm::vec3& lightColor,
-                             float lightIntensity,
                              const glm::vec4& skyTopColor,
                              const glm::vec4& skyBottomColor,
                              ImGuiManager* imgui);
 
     void DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
+                   glm::vec3 cameraPos,
                    const std::vector<glm::vec3>& targetPositions,
                    const std::vector<float>& targetScales,
                    const std::vector<Material>& targetMaterials,
                    const glm::vec3& lightDir,
                    const glm::vec3& lightColor,
                    float lightIntensity,
+                   const glm::vec3& ambientColor,
                    const glm::vec4& skyTopColor,
                    const glm::vec4& skyBottomColor,
                    ImGuiManager* imgui);

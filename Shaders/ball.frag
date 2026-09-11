@@ -2,30 +2,35 @@
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec3 fragNormal;
-layout(location = 2) in float fragMetallic;
-layout(location = 3) in float fragRoughness;
-layout(location = 4) in float fragEmissive;
+layout(location = 2) in vec3 fragWorldPos;
+layout(location = 3) in float fragMetallic;
+layout(location = 4) in float fragRoughness;
+layout(location = 5) in float fragEmissive;
+
+layout(set = 0, binding = 0) uniform FrameUniforms {
+    mat4 viewProj;
+    vec4 cameraPos;
+    vec4 lightDirAndIntensity;
+    vec4 lightColor;
+    vec4 ambientColor;
+} frame;
 
 layout(push_constant) uniform PushConstants {
-    mat4 viewProj;
+    mat4 model;
     vec4 ballColor;
-    float metallic;
-    float roughness;
-    float emissive_strength;
-    float pad;
-    vec4 lightDirAndIntensity;
-    vec4 lightColorAndPad;
+    vec4 material;
 } push;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
     vec3 normal = normalize(fragNormal);
-    vec3 lightDir = normalize(push.lightDirAndIntensity.xyz);
-    float lightIntensity = push.lightDirAndIntensity.w;
-    vec3 lightColor = push.lightColorAndPad.rgb;
+    vec3 lightDir = normalize(frame.lightDirAndIntensity.xyz);
+    float lightIntensity = frame.lightDirAndIntensity.w;
+    vec3 lightColor = frame.lightColor.rgb;
 
-    vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0));
+    // 正确的视线方向：从表面指向相机
+    vec3 viewDir = normalize(frame.cameraPos.xyz - fragWorldPos);
     vec3 halfVec = normalize(lightDir + viewDir);
 
     float diffuse = max(dot(normal, lightDir), 0.0);
@@ -36,7 +41,8 @@ void main() {
     }
 
     vec3 specColor = mix(vec3(1.0), fragColor, fragMetallic);
-    vec3 ambient = fragColor * 0.4;
+    // 环境光跟随天空颜色（T2.4）
+    vec3 ambient = fragColor * frame.ambientColor.rgb;
     vec3 diffuseColor = fragColor * diffuse * 0.6 * lightColor * lightIntensity;
     vec3 specularColor = specColor * specular * 0.8 * lightColor * lightIntensity;
     vec3 emissiveColor = fragColor * fragEmissive;

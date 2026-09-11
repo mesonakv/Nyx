@@ -18,6 +18,57 @@
 #include <imgui.h>
 #include <backends/imgui_impl_sdl2.h>
 
+// ============ 天空渐变关键帧 ============
+
+struct SkyKeyframe {
+    float t;
+    glm::vec4 top;
+    glm::vec4 bottom;
+};
+
+static const glm::vec4 kNoonTop    (0.2f,  0.5f,  1.0f,  1.0f);
+static const glm::vec4 kNoonBottom (0.7f,  0.8f,  1.0f,  1.0f);
+static const glm::vec4 kNightTop   (0.01f, 0.01f, 0.08f, 1.0f);
+static const glm::vec4 kNightBottom(0.08f, 0.08f, 0.2f,  1.0f);
+static const glm::vec4 kDuskTop    (0.15f, 0.1f,  0.3f,  1.0f);
+static const glm::vec4 kDuskBottom (1.0f,  0.5f,  0.2f,  1.0f);
+
+static const SkyKeyframe kSkyKeyframes[] = {
+    {0.00f, kNightTop, kNightBottom},
+    {0.21f, kNightTop, kNightBottom},
+    {0.25f, kDuskTop,  kDuskBottom},
+    {0.29f, kNoonTop,  kNoonBottom},
+    {0.71f, kNoonTop,  kNoonBottom},
+    {0.75f, kDuskTop,  kDuskBottom},
+    {0.79f, kNightTop, kNightBottom},
+    {1.00f, kNightTop, kNightBottom},
+};
+static const int kSkyKeyframeCount = sizeof(kSkyKeyframes) / sizeof(kSkyKeyframes[0]);
+
+void SampleSkyGradient(float t, glm::vec4& outTop, glm::vec4& outBottom) {
+    if (t <= kSkyKeyframes[0].t) {
+        outTop = kSkyKeyframes[0].top;
+        outBottom = kSkyKeyframes[0].bottom;
+        return;
+    }
+    if (t >= kSkyKeyframes[kSkyKeyframeCount - 1].t) {
+        outTop = kSkyKeyframes[kSkyKeyframeCount - 1].top;
+        outBottom = kSkyKeyframes[kSkyKeyframeCount - 1].bottom;
+        return;
+    }
+    for (int i = 0; i < kSkyKeyframeCount - 1; i++) {
+        if (t >= kSkyKeyframes[i].t && t <= kSkyKeyframes[i + 1].t) {
+            float span = kSkyKeyframes[i + 1].t - kSkyKeyframes[i].t;
+            float f = (span > 0.0001f) ? (t - kSkyKeyframes[i].t) / span : 0.0f;
+            outTop = glm::mix(kSkyKeyframes[i].top, kSkyKeyframes[i + 1].top, f);
+            outBottom = glm::mix(kSkyKeyframes[i].bottom, kSkyKeyframes[i + 1].bottom, f);
+            return;
+        }
+    }
+    outTop = kSkyKeyframes[0].top;
+    outBottom = kSkyKeyframes[0].bottom;
+}
+
 std::vector<SDL_DisplayMode> GetAvailableDisplayModes() {
     std::vector<SDL_DisplayMode> modes;
     int displayCount = SDL_GetNumVideoDisplays();
@@ -107,6 +158,7 @@ int main(int argc, char* argv[]) {
     DisplaySettings pendingSettings = vk.settings;
 
     float timeOfDay = 0.5f;
+    float ambientStrength = 0.35f;   // T2.4: 环境光强度
 
     uint32_t frameCount = 0;
     uint32_t fpsTimer = 0;
@@ -141,14 +193,12 @@ int main(int argc, char* argv[]) {
                     windowMinimized = false;
                     if (swapchainDestroyed) pendingDisplayChange = true;
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
-                    // 独占全屏失去焦点：只标记，不改变 windowMode
                     if (vk.settings.windowMode == WindowMode::ExclusiveFullscreen) {
                         exclusiveFullscreenSuspended = true;
                     }
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
                     windowMinimized = false;
                     if (swapchainDestroyed) pendingDisplayChange = true;
-                    // 独占全屏重新获得焦点：重建 swapchain 恢复独占全屏
                     if (exclusiveFullscreenSuspended) {
                         pendingSettings = vk.settings;
                         pendingDisplayChange = true;
@@ -254,7 +304,8 @@ int main(int argc, char* argv[]) {
                             "@" + std::to_string(actualMode.refresh_rate) + "Hz";
         SDL_SetWindowTitle(window, title.c_str());
 
-        float sunAngle = timeOfDay * 2.0f * 3.14159f;
+        // ============ 光照计算 ============
+        float sunAngle = (timeOfDay - 0.25f) * 2.0f * 3.14159f;
         glm::vec3 lightDir = glm::normalize(glm::vec3(cos(sunAngle), sin(sunAngle), 0.3f));
         float daylight = std::max(0.0f, sin(sunAngle));
         float moonlight = std::max(0.0f, -sin(sunAngle));
@@ -265,33 +316,17 @@ int main(int argc, char* argv[]) {
             daylight / std::max(daylight + moonlight, 0.01f)
         );
 
+        // ============ 天空颜色 ============
         glm::vec4 skyTopColor;
         glm::vec4 skyBottomColor;
-        {
-            glm::vec4 noonTop(0.2f, 0.5f, 1.0f, 1.0f);
-            glm::vec4 noonBottom(0.7f, 0.8f, 1.0f, 1.0f);
-            glm::vec4 nightTop(0.01f, 0.01f, 0.08f, 1.0f);
-            glm::vec4 nightBottom(0.08f, 0.08f, 0.2f, 1.0f);
-            glm::vec4 duskTop(0.15f, 0.1f, 0.3f, 1.0f);
-            glm::vec4 duskBottom(1.0f, 0.5f, 0.2f, 1.0f);
+        SampleSkyGradient(timeOfDay, skyTopColor, skyBottomColor);
 
-            float t = timeOfDay;
-            if (t > 0.21f && t < 0.29f) {
-                float f = (t - 0.21f) / 0.08f;
-                skyTopColor = glm::mix(nightTop, noonTop, f);
-                skyBottomColor = glm::mix(nightBottom, duskBottom, f);
-            } else if (t >= 0.29f && t < 0.71f) {
-                skyTopColor = noonTop;
-                skyBottomColor = noonBottom;
-            } else if (t >= 0.71f && t < 0.79f) {
-                float f = (t - 0.71f) / 0.08f;
-                skyTopColor = glm::mix(noonTop, duskTop, f);
-                skyBottomColor = glm::mix(noonBottom, duskBottom, f);
-            } else {
-                skyTopColor = nightTop;
-                skyBottomColor = nightBottom;
-            }
-        }
+		// ============ 环境光（T2.4）============
+		// 从天空颜色取平均，乘以强度。白天接近 0.4，夜晚很暗。
+		glm::vec3 skyBottomRgb(skyBottomColor.r, skyBottomColor.g, skyBottomColor.b);
+		glm::vec3 skyTopRgb(skyTopColor.r, skyTopColor.g, skyTopColor.b);
+		glm::vec3 skyAvg = glm::mix(skyBottomRgb, skyTopRgb, 0.5f);
+		glm::vec3 ambientColor = skyAvg * ambientStrength;
 
         imgui.NewFrame();
 
@@ -411,6 +446,7 @@ int main(int argc, char* argv[]) {
 
             if (ImGui::CollapsingHeader("Lighting")) {
                 ImGui::SliderFloat("Time of Day", &timeOfDay, 0.0f, 1.0f);
+                ImGui::SliderFloat("Ambient", &ambientStrength, 0.0f, 1.0f);
                 if (ImGui::Button("Set Noon")) timeOfDay = 0.5f;
                 ImGui::SameLine();
                 if (ImGui::Button("Set Midnight")) timeOfDay = 0.0f;
@@ -464,9 +500,11 @@ int main(int argc, char* argv[]) {
 
         float aspect = (float)vk.swapchainExtent.width / (float)vk.swapchainExtent.height;
         renderer.DrawFrame(vk, camera.GetViewMatrix(), camera.GetProjectionMatrix(aspect),
-                           targets.GetAlivePositions(), targets.GetAliveScales(), targetMaterials,
-                           lightDir, lightColor, lightIntensity,
-                           skyTopColor, skyBottomColor, &imgui);
+                   camera.position,
+                   targets.GetAlivePositions(), targets.GetAliveScales(), targetMaterials,
+                   lightDir, lightColor, lightIntensity,
+                   ambientColor,
+                   skyTopColor, skyBottomColor, &imgui);
 
         uint64_t frameEndCounter = SDL_GetPerformanceCounter();
         float frameTimeMs = (float)((frameEndCounter - frameStartCounter) * 1000.0 / performanceFrequency);
