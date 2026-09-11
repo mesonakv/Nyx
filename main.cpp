@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
     imgui.Initialize(window, vk);
 
     Renderer renderer;
-    renderer.Initialize(vk);
+    renderer.Initialize(vk, window);
 
     Camera camera;
     camera.position = glm::vec3(0.0f, 1.5f, 8.0f);
@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
     bool pendingDisplayChange = false;
     bool windowMinimized = false;
     bool swapchainDestroyed = false;
-    bool exitExclusiveFullscreen = false;
+    bool exclusiveFullscreenSuspended = false;
     DisplaySettings pendingSettings = vk.settings;
 
     float timeOfDay = 0.5f;
@@ -137,26 +137,30 @@ int main(int argc, char* argv[]) {
             if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_MINIMIZED) {
                     windowMinimized = true;
-                } else if (event.window.event == SDL_WINDOWEVENT_RESTORED ||
-                           event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                } else if (event.window.event == SDL_WINDOWEVENT_RESTORED) {
                     windowMinimized = false;
                     if (swapchainDestroyed) pendingDisplayChange = true;
                 } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                    // 独占全屏失去焦点：只标记，不改变 windowMode
                     if (vk.settings.windowMode == WindowMode::ExclusiveFullscreen) {
-                        exitExclusiveFullscreen = true;
+                        exclusiveFullscreenSuspended = true;
+                    }
+                } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                    windowMinimized = false;
+                    if (swapchainDestroyed) pendingDisplayChange = true;
+                    // 独占全屏重新获得焦点：重建 swapchain 恢复独占全屏
+                    if (exclusiveFullscreenSuspended) {
+                        pendingSettings = vk.settings;
+                        pendingDisplayChange = true;
+                        exclusiveFullscreenSuspended = false;
                     }
                 }
             }
 
-            if (!editorMode) camera.ProcessMouse(event);
+            if (!editorMode && event.type == SDL_MOUSEMOTION) {
+                camera.ProcessMouseDelta((float)event.motion.xrel, (float)event.motion.yrel);
+            }
             ImGui_ImplSDL2_ProcessEvent(&event);
-        }
-
-        if (exitExclusiveFullscreen) {
-            vk.settings.windowMode = WindowMode::Borderless;
-            pendingSettings.windowMode = WindowMode::Borderless;
-            pendingDisplayChange = true;
-            exitExclusiveFullscreen = false;
         }
 
         if (windowMinimized) {
@@ -324,8 +328,8 @@ int main(int argc, char* argv[]) {
                     for (auto& t : targets.targets) t.materialIndex = materials.selectedIndex;
                 }
                 if (ImGui::Button("Reset Targets")) {
-                    targets.Spawn();
                     targets.currentMaterialIndex = materials.selectedIndex;
+                    targets.Spawn();
                 }
             }
 

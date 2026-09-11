@@ -30,7 +30,6 @@ void VulkanContext::Initialize(SDL_Window* window, const DisplaySettings& initia
     settings = initialSettings;
     SetWindowFullscreen(window, settings.windowMode);
 
-    // Instance
     VkApplicationInfo appInfo = {};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = "Nyx";
@@ -117,6 +116,13 @@ void VulkanContext::UpdateWindowMode(SDL_Window* window, WindowMode mode) {
 
 void VulkanContext::DestroySwapchainResources() {
     vkDeviceWaitIdle(device);
+
+    // 命令缓冲依赖 swapchain image 数量，必须在这里释放
+    if (!commandBuffers.empty()) {
+        vkFreeCommandBuffers(device, commandPool,
+            (uint32_t)commandBuffers.size(), commandBuffers.data());
+        commandBuffers.clear();
+    }
 
     for (auto fb : framebuffers) vkDestroyFramebuffer(device, fb, nullptr);
     framebuffers.clear();
@@ -236,7 +242,6 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
 
     VkSampleCountFlagBits msaaSamples = GetMSAASamples();
 
-    // 创建 MSAA 颜色附件
     VkImageCreateInfo msaaInfo = {};
     msaaInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     msaaInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -274,7 +279,6 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     msaaViewInfo.subresourceRange.layerCount = 1;
     vkCreateImageView(device, &msaaViewInfo, nullptr, &msaaColorImageView);
 
-    // 深度缓冲（使用 MSAA 采样数）
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
     VkImageCreateInfo depthInfo = {};
     depthInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -313,12 +317,11 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     depthViewInfo.subresourceRange.layerCount = 1;
     vkCreateImageView(device, &depthViewInfo, nullptr, &depthImageView);
 
-    // 渲染通道（3 附件：MSAA 颜色、深度、Resolve）
     VkAttachmentDescription colorAttachment = {};
     colorAttachment.format = swapchainFormat;
     colorAttachment.samples = msaaSamples;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;   // MSAA 中间结果不保存
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -373,7 +376,6 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     rpi.pSubpasses = &subpass;
     vkCreateRenderPass(device, &rpi, nullptr, &renderPass);
 
-    // 帧缓冲（3 附件）
     framebuffers.resize(swapchainImageViews.size());
     for (size_t i = 0; i < swapchainImageViews.size(); i++) {
         VkImageView fbAttachments[] = {msaaColorImageView, depthImageView, swapchainImageViews[i]};
@@ -388,7 +390,6 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
         vkCreateFramebuffer(device, &fi, nullptr, &framebuffers[i]);
     }
 
-    // 强制窗口尺寸与交换链一致，避免鼠标错位
     SDL_SetWindowSize(window, (int)swapchainExtent.width, (int)swapchainExtent.height);
 
     std::cout << "Swapchain recreated with MSAA x" << settings.msaaSamples << std::endl;

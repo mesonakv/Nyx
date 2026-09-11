@@ -4,8 +4,8 @@ project(NyxEngine)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 禁用异常和 RTTI
-add_compile_options(/EHsc /GR-)
+# 禁用异常和 RTTI，强制 UTF-8 源码编码
+add_compile_options(/EHsc /GR- /utf-8)
 
 # Vulkan
 find_package(Vulkan REQUIRED)

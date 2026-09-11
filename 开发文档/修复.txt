@@ -1,0 +1,319 @@
+阶段 0：立即修复（改动小，收益大）
+T0.1 删除 DrawFrame 里的 vkDeviceWaitIdle
+
+文件：Renderer.cpp
+
+改动：删掉 DrawFrame 里 RecordCommandBuffers 前的 vkDeviceWaitIdle(ctx.device);
+
+验证：帧率应该上升，独占全屏切出切回不再卡死
+
+风险：低。fence 已经保证上一帧完成，命令缓冲重录是安全的
+
+T0.2 修复 TargetManager::Spawn 未初始化 materialIndex
+
+文件：TargetManager.cpp
+
+改动：Spawn() 里加 t.materialIndex = currentMaterialIndex;
+
+验证：重置目标后颜色正确
+
+风险：无
+
+T0.3 去掉 Shoot 里的 std::cout
+
+文件：TargetManager.cpp
+
+改动：删掉 std::cout << "Hit!..." << std::endl;，或改成 #ifdef _DEBUG 包裹
+
+验证：命中时帧时间不再抖动
+
+风险：无
+
+T0.4 Camera::ProcessMouse 改签名
+
+文件：Camera.h / Camera.cpp / main.cpp
+
+改动：
+
+cpp
+// Camera.h
+void ProcessMouseDelta(float dx, float dy);
+// Camera.cpp
+void Camera::ProcessMouseDelta(float dx, float dy) {
+    yaw += dx * sensitivity;
+    pitch -= dy * sensitivity;
+    pitch = glm::clamp(pitch, glm::radians(-89.0f), glm::radians(89.0f));
+}
+// main.cpp 事件循环里
+if (!editorMode && event.type == SDL_MOUSEMOTION) {
+    camera.ProcessMouseDelta((float)event.motion.xrel, (float)event.motion.yrel);
+}
+验证：手感不变
+
+风险：无
+
+T0.5 yaw 取模
+
+文件：Camera.cpp
+
+改动：ProcessMouseDelta 末尾加 yaw = fmod(yaw, 2.0f * 3.14159f);
+
+验证：手感不变
+
+风险：无
+
+阶段 1：Vulkan 同步结构（独占全屏的关键）
+T1.1 多帧并行
+
+文件：Renderer.h / Renderer.cpp / VulkanContext.h
+
+改动：
+
+Renderer 里把单个 semaphore/fence 改成 std::vector，大小 MAX_FRAMES_IN_FLIGHT = 2
+
+imageAvailableSemaphore 按帧索引（每帧一个）
+
+renderFinishedSemaphore 按 swapchain image 索引（每张 image 一个）
+
+inFlightFence 按帧索引
+
+DrawFrame 里 currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT
+
+验证：帧率上升，独占全屏切出切回稳定
+
+风险：中。需要仔细管理索引
+
+T1.2 检查 vkAcquireNextImageKHR 和 vkQueuePresentKHR 返回值
+
+文件：Renderer.cpp
+
+改动：
+
+cpp
+VkResult result = vkAcquireNextImageKHR(...);
+if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    ctx.RecreateSwapchain(window);  // 需要 window 指针
+    return;
+}
+if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+    // 记录并处理
+}
+// ...
+result = vkQueuePresentKHR(...);
+if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    ctx.RecreateSwapchain(window);
+}
+需要 Renderer 持有 SDL_Window*，或 DrawFrame 接收它
+
+验证：独占全屏按 Win 键不再卡死
+
+风险：中
+
+T1.3 命令缓冲生命周期
+
+文件：VulkanContext.cpp
+
+改动：DestroySwapchainResources 里加：
+
+cpp
+if (!commandBuffers.empty()) {
+    vkFreeCommandBuffers(device, commandPool,
+        (uint32_t)commandBuffers.size(), commandBuffers.data());
+    commandBuffers.clear();
+}
+验证：多次切换分辨率/全屏模式不崩溃
+
+风险：低
+
+T1.4 独占全屏切出后不退出，而是重建
+
+文件：main.cpp
+
+改动：FOCUS_LOST 时只标记 needsReacquire = true，不改 windowMode；FOCUS_GAINED 时重建 swapchain 恢复
+
+验证：Alt+Tab 切出切回，仍是独占全屏
+
+风险：中
+
+阶段 2：Shader 与光照修正
+T2.1 Push constant 重新组织
+
+文件：Renderer.h / Renderer.cpp / ball.vert / ball.frag / sky.frag
+
+改动：按上面的方案，拆成 push constant（每物体）+ uniform buffer（每帧）
+
+验证：shader 编译通过，画面不变
+
+风险：中。需要新建 uniform buffer、descriptor set、descriptor pool
+
+T2.2 顶点 shader 输出世界坐标
+
+文件：ball.vert
+
+改动：
+
+glsl
+layout(location = 5) out vec3 fragWorldPos;
+// main() 里
+vec4 worldPos = push.model * vec4(inPosition, 1.0);
+fragWorldPos = worldPos.xyz;
+gl_Position = push.viewProj * worldPos;
+验证：位置正确
+
+风险：低
+
+T2.3 fragment shader 修正 viewDir
+
+文件：ball.frag
+
+改动：
+
+glsl
+vec3 viewDir = normalize(push.cameraPos.xyz - fragWorldPos);
+验证：高光随视角和物体旋转正确移动
+
+风险：低
+
+T2.4 环境光接入天空颜色
+
+文件：ball.frag / main.cpp
+
+改动：ambientColor 从 skyTopColor 和 skyBottomColor 混合，通过 uniform buffer 传入
+
+验证：夜晚球体变暗，黄昏球体偏暖
+
+风险：低
+
+T2.5 统一 timeOfDay 坐标系
+
+文件：main.cpp
+
+改动：sunAngle = (timeOfDay - 0.25f) * 2π，天空颜色分段按同一坐标系重写
+
+验证：Set Noon 时太阳在头顶，Set Midnight 时全黑
+
+风险：低
+
+T2.6 天空颜色改关键帧表
+
+文件：main.cpp 或新的 LightingSystem.cpp
+
+改动：定义 SkyKeyframe 数组，线性插值
+
+验证：一天循环无跳变
+
+风险：低
+
+阶段 3：拆 main.cpp
+T3.1 InputSystem
+
+新文件：NyxEngine/Core/InputSystem.h/.cpp
+
+职责：
+
+管理鼠标捕获状态（SetRelativeMouseMode）
+
+提供 GetMouseDelta()、IsKeyDown()、WasKeyPressed()
+
+F1 切换编辑器模式
+
+未来支持手柄、灵敏度曲线
+
+验证：main.cpp 里不再直接调用 SDL_SetRelativeMouseMode
+
+T3.2 LightingSystem
+
+新文件：NyxEngine/Render/LightingSystem.h/.cpp
+
+职责：
+
+timeOfDay 驱动
+
+太阳/月亮方向、颜色、强度
+
+天空颜色关键帧
+
+输出 LightingData 结构体
+
+验证：main.cpp 里光照计算全部移走
+
+T3.3 EditorPanel 分离
+
+新目录：NyxEngine/Editor/
+
+文件：EditorPanel.h/.cpp、DisplaySettingsPanel.h/.cpp、MaterialPanel.h/.cpp、MovementPanel.h/.cpp、LightingPanel.h/.cpp、PerformancePanel.h/.cpp
+
+验证：main.cpp 里 ImGui 代码少于 20 行
+
+T3.4 NyxEngine 实例
+
+新文件：NyxEngine/NyxEngine.h/.cpp
+
+职责：持有 VulkanContext、Renderer、InputSystem、LightingSystem、Camera
+
+接口：Initialize / BeginFrame / EndFrame / Shutdown + 各子系统访问器
+
+验证：main.cpp 变成 50 行以内的启动器
+
+阶段 4：材质与 PrismSpectra
+T4.1 Material 结构扩展
+
+文件：Material.h
+
+改动：加 fresnelStrength、dispersion、bloomTint；合并 emissive 和 emissive_strength
+
+验证：编译通过
+
+T4.2 菲涅尔 + 干净反射
+
+文件：ball.frag
+
+改动：
+
+glsl
+float F = fresnelStrength + (1.0 - fresnelStrength) * pow(1.0 - dot(N, V), 5.0);
+vec3 R = reflect(-V, N);
+vec3 envColor = sampleSky(R);   // 程序化天空
+vec3 specular = mix(specular, envColor, F);
+验证：玻璃材质有边缘反射
+
+T4.3 色散 + 微泛光
+
+文件：ball.frag + 新后处理 pass
+
+改动：R/G/B 三通道分别采样环境贴图，偏移量不同；高光区域做泛光
+
+验证：玻璃边缘有淡蓝紫偏移
+
+建议的执行顺序
+今天：T0.1 → T0.2 → T0.3 → T0.4 → T0.5
+
+这周：T1.1 → T1.2 → T1.3 → T1.4
+
+下周：T2.1 → T2.2 → T2.3 → T2.4 → T2.5 → T2.6
+
+之后：阶段 3 → 阶段 4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+T2.5 + T2.6：统一 timeOfDay 坐标系 + 天空颜色关键帧（只动 main.cpp，独立改动）
+
+T2.2 + T2.3：顶点 shader 输出世界坐标 + fragment shader 修正 viewDir（动 ball.vert / ball.frag，可能微调 push constant）
+
+T2.4：环境光接入天空颜色（依赖前面的世界坐标）
+
+T2.1：push constant 重新组织 + 引入 uniform buffer（把前面积累的参数整理干净）

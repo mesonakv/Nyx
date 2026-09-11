@@ -1,16 +1,17 @@
 #include "Camera.h"
 #include <algorithm>
+#include <cmath>
 
-void Camera::ProcessMouse(SDL_Event& event) {
-    if (event.type == SDL_MOUSEMOTION) {
-        // 修复：鼠标右移视角右转
-        yaw += event.motion.xrel * sensitivity;
-        pitch -= event.motion.yrel * sensitivity;
+void Camera::ProcessMouseDelta(float dx, float dy) {
+    yaw += dx * sensitivity;
+    pitch -= dy * sensitivity;
 
-        const float maxPitch = glm::radians(89.0f);
-        const float minPitch = glm::radians(-89.0f);
-        pitch = std::max(minPitch, std::min(maxPitch, pitch));
-    }
+    const float maxPitch = glm::radians(89.0f);
+    const float minPitch = glm::radians(-89.0f);
+    pitch = std::max(minPitch, std::min(maxPitch, pitch));
+
+    const float twoPi = 2.0f * 3.14159265358979323846f;
+    yaw = fmod(yaw, twoPi);
 }
 
 glm::vec3 Camera::GetDirection() const {

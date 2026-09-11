@@ -1,0 +1,24 @@
+# 构建产物
+build/
+out/
+
+# Shader 编译产物
+*.spv
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeSettings.json
+
+# ImGui 运行时状态
+imgui.ini
+
+# 系统
+Thumbs.db
+Desktop.ini
+
+# 日志和临时文件
+*.log
+output.txt

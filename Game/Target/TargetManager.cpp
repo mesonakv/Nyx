@@ -1,5 +1,4 @@
 #include "TargetManager.h"
-#include <iostream>
 #include <cmath>
 
 void TargetManager::Spawn() {
@@ -14,6 +13,7 @@ void TargetManager::Spawn() {
         t.phase = (float)(rand() % 628) / 100.0f;   // 随机相位 0..2π
         t.scale = 0.6f;
         t.alive = true;
+        t.materialIndex = currentMaterialIndex;
         targets.push_back(t);
     }
     score = 0;
@@ -74,7 +74,6 @@ void TargetManager::Shoot(glm::vec3 cameraPos, glm::vec3 direction) {
         if (angle < hitAngle) {
             t.alive = false;
             score++;
-            std::cout << "Hit! Score: " << score << std::endl;
         }
     }
 }

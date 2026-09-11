@@ -18,28 +18,62 @@ static std::vector<char> ReadFile(const std::string& filename) {
     return buffer;
 }
 
-void Renderer::Initialize(VulkanContext& ctx) {
-    CreateBallMesh(ctx);
-    CreateCrosshairMesh(ctx);
-    CreateGroundMesh(ctx);
-    CreateShadowMesh(ctx);
-    CreateSkyMesh(ctx);          // 新增
-    CreateGraphicsPipeline(ctx);
-    CreateSkyPipeline(ctx);      // 新增
+void Renderer::CreateSyncObjects(VulkanContext& ctx) {
+    size_t imageCount = ctx.swapchainImages.size();
+
+    imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    renderFinishedSemaphores.resize(imageCount);
+    imagesInFlight.assign(imageCount, VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
     VkFenceCreateInfo fi = {};
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    vkCreateSemaphore(ctx.device, &si, nullptr, &imageAvailableSemaphore);
-    vkCreateSemaphore(ctx.device, &si, nullptr, &renderFinishedSemaphore);
-    vkCreateFence(ctx.device, &fi, nullptr, &inFlightFence);
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkCreateSemaphore(ctx.device, &si, nullptr, &imageAvailableSemaphores[i]);
+        vkCreateFence(ctx.device, &fi, nullptr, &inFlightFences[i]);
+    }
+
+    for (size_t i = 0; i < imageCount; i++) {
+        vkCreateSemaphore(ctx.device, &si, nullptr, &renderFinishedSemaphores[i]);
+    }
+
+    currentFrame = 0;
+}
+
+void Renderer::DestroySyncObjects(VulkanContext& ctx) {
+    for (auto s : imageAvailableSemaphores) vkDestroySemaphore(ctx.device, s, nullptr);
+    imageAvailableSemaphores.clear();
+
+    for (auto s : renderFinishedSemaphores) vkDestroySemaphore(ctx.device, s, nullptr);
+    renderFinishedSemaphores.clear();
+
+    for (auto f : inFlightFences) vkDestroyFence(ctx.device, f, nullptr);
+    inFlightFences.clear();
+
+    imagesInFlight.clear();
+    currentFrame = 0;
+}
+
+void Renderer::Initialize(VulkanContext& ctx, SDL_Window* w) {
+    window = w;
+
+    CreateBallMesh(ctx);
+    CreateCrosshairMesh(ctx);
+    CreateGroundMesh(ctx);
+    CreateShadowMesh(ctx);
+    CreateSkyMesh(ctx);
+    CreateGraphicsPipeline(ctx);
+    CreateSkyPipeline(ctx);
+
+    CreateSyncObjects(ctx);
 }
 
 void Renderer::CreateSkyMesh(VulkanContext& ctx) {
-    // 全屏三角形：两个三角形组成四边形，覆�?NDC
     struct Vertex2D {
         float x, y;
     };
@@ -114,7 +148,7 @@ void Renderer::CreateSkyPipeline(VulkanContext& ctx) {
 
     VkVertexInputBindingDescription binding = {};
     binding.binding = 0;
-    binding.stride = 8; // vec2
+    binding.stride = 8;
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
     VkVertexInputAttributeDescription attr = {};
@@ -161,7 +195,6 @@ void Renderer::CreateSkyPipeline(VulkanContext& ctx) {
     multisample.rasterizationSamples = ctx.GetMSAASamples();
     multisample.sampleShadingEnable = VK_FALSE;
 
-    // 天空不写深度、不测试深度
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_FALSE;
@@ -179,7 +212,7 @@ void Renderer::CreateSkyPipeline(VulkanContext& ctx) {
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushRange.offset = 0;
-    pushRange.size = 32; // 两个 vec4
+    pushRange.size = 32;
 
     VkPipelineLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -589,6 +622,9 @@ void Renderer::CreateGraphicsPipeline(VulkanContext& ctx) {
 void Renderer::RecreatePipeline(VulkanContext& ctx) {
     vkDeviceWaitIdle(ctx.device);
 
+    // 先销毁旧的同步对象（swapchain image 数量可能变了）
+    DestroySyncObjects(ctx);
+
     if (graphicsPipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(ctx.device, graphicsPipeline, nullptr);
         graphicsPipeline = VK_NULL_HANDLE;
@@ -608,9 +644,13 @@ void Renderer::RecreatePipeline(VulkanContext& ctx) {
 
     CreateGraphicsPipeline(ctx);
     CreateSkyPipeline(ctx);
+
+    // 用新的 swapchain image 数量重建同步对象
+    CreateSyncObjects(ctx);
 }
 
-void Renderer::RecordCommandBuffers(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
+void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex,
+                                    glm::mat4 view, glm::mat4 proj,
                                     const std::vector<glm::vec3>& targetPositions,
                                     const std::vector<float>& targetScales,
                                     const std::vector<Material>& targetMaterials,
@@ -620,7 +660,13 @@ void Renderer::RecordCommandBuffers(VulkanContext& ctx, glm::mat4 view, glm::mat
                                     const glm::vec4& skyTopColor,
                                     const glm::vec4& skyBottomColor,
                                     ImGuiManager* imgui) {
-    if (ctx.commandBuffers.empty()) {
+    // 惰性分配：如果命令缓冲为空或数量不匹配，重新分配
+    if (ctx.commandBuffers.size() != ctx.framebuffers.size()) {
+        if (!ctx.commandBuffers.empty()) {
+            vkFreeCommandBuffers(ctx.device, ctx.commandPool,
+                (uint32_t)ctx.commandBuffers.size(), ctx.commandBuffers.data());
+            ctx.commandBuffers.clear();
+        }
         ctx.commandBuffers.resize(ctx.framebuffers.size());
         VkCommandBufferAllocateInfo ai = {};
         ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -628,10 +674,6 @@ void Renderer::RecordCommandBuffers(VulkanContext& ctx, glm::mat4 view, glm::mat
         ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         ai.commandBufferCount = (uint32_t)ctx.commandBuffers.size();
         vkAllocateCommandBuffers(ctx.device, &ai, ctx.commandBuffers.data());
-    } else {
-        for (auto cmd : ctx.commandBuffers) {
-            vkResetCommandBuffer(cmd, 0);
-        }
     }
 
     struct ObjectPushData {
@@ -650,135 +692,137 @@ void Renderer::RecordCommandBuffers(VulkanContext& ctx, glm::mat4 view, glm::mat
         glm::vec4 bottomColor;
     };
 
-    for (size_t i = 0; i < ctx.commandBuffers.size(); i++) {
-        VkCommandBufferBeginInfo bi = {};
-        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        vkBeginCommandBuffer(ctx.commandBuffers[i], &bi);
+    VkCommandBuffer cmd = ctx.commandBuffers[imageIndex];
 
-        VkRenderPassBeginInfo rpi = {};
-        rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpi.renderPass = ctx.renderPass;
-        rpi.framebuffer = ctx.framebuffers[i];
-        rpi.renderArea.extent = ctx.swapchainExtent;
+    vkResetCommandBuffer(cmd, 0);
 
-        VkClearValue clearValues[3] = {};
-        clearValues[0].color = {{0.968f, 0.961f, 0.949f, 1.0f}};
-        clearValues[1].depthStencil = {1.0f, 0};
-        clearValues[2].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-        rpi.clearValueCount = 3;
-        rpi.pClearValues = clearValues;
+    VkCommandBufferBeginInfo bi = {};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkBeginCommandBuffer(cmd, &bi);
 
-        vkCmdBeginRenderPass(ctx.commandBuffers[i], &rpi, VK_SUBPASS_CONTENTS_INLINE);
+    VkRenderPassBeginInfo rpi = {};
+    rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpi.renderPass = ctx.renderPass;
+    rpi.framebuffer = ctx.framebuffers[imageIndex];
+    rpi.renderArea.extent = ctx.swapchainExtent;
 
-        // === 绘制天空 ===
-        {
-            VkDeviceSize skyOffset = 0;
-            vkCmdBindPipeline(ctx.commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, skyPipeline);
-            vkCmdBindVertexBuffers(ctx.commandBuffers[i], 0, 1, &skyVertexBuffer, &skyOffset);
-            SkyPushData skyPush;
-            skyPush.topColor = skyTopColor;
-            skyPush.bottomColor = skyBottomColor;
-            vkCmdPushConstants(ctx.commandBuffers[i], skyPipelineLayout,
-                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(SkyPushData), &skyPush);
-            vkCmdDraw(ctx.commandBuffers[i], 6, 1, 0, 0);
-        }
+    VkClearValue clearValues[3] = {};
+    clearValues[0].color = {{0.968f, 0.961f, 0.949f, 1.0f}};
+    clearValues[1].depthStencil = {1.0f, 0};
+    clearValues[2].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    rpi.clearValueCount = 3;
+    rpi.pClearValues = clearValues;
 
-        // === 绘制地面 ===
-        vkCmdBindPipeline(ctx.commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(ctx.commandBuffers[i], 0, 1, &groundVertexBuffer, offsets);
-        ObjectPushData groundPush;
-        groundPush.viewProj = proj * view;
-        groundPush.color = glm::vec4(0.9f, 0.89f, 0.85f, 1.0f);
-        groundPush.metallic = 0.0f;
-        groundPush.roughness = 0.9f;
-        groundPush.emissive_strength = 0.0f;
-        groundPush.pad = 0.0f;
-        groundPush.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
-        groundPush.lightColorAndPad = glm::vec4(lightColor, 0.0f);
-        vkCmdPushConstants(ctx.commandBuffers[i], pipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(ObjectPushData), &groundPush);
-        vkCmdDraw(ctx.commandBuffers[i], groundVertexCount, 1, 0, 0);
+    vkCmdBeginRenderPass(cmd, &rpi, VK_SUBPASS_CONTENTS_INLINE);
 
-        // === 绘制阴影 ===
-        for (size_t t = 0; t < targetPositions.size(); t++) {
-            glm::vec3 pos = targetPositions[t];
-            float scale = targetScales[t];
-            float heightAboveGround = pos.y - (-2.0f) - 0.5f * scale;
-            glm::vec3 shadowOffset(0.0f);
-            if (fabs(lightDir.y) > 0.001f) {
-                float shadowScale = 0.25f;
-                shadowOffset = -glm::vec3(lightDir.x, 0.0f, lightDir.z) * (heightAboveGround / lightDir.y) * shadowScale;
-            }
-            glm::vec3 shadowPos = glm::vec3(pos.x, -1.98f, pos.z) + shadowOffset;
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), shadowPos);
-            model = glm::scale(model, glm::vec3(scale, 1.0f, scale));
-            glm::mat4 viewProjShadow = proj * view * model;
-
-            vkCmdBindVertexBuffers(ctx.commandBuffers[i], 0, 1, &shadowVertexBuffer, offsets);
-            ObjectPushData shadowPush;
-            shadowPush.viewProj = viewProjShadow;
-            shadowPush.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-            shadowPush.metallic = 0.0f;
-            shadowPush.roughness = 1.0f;
-            shadowPush.emissive_strength = 0.0f;
-            shadowPush.pad = 0.0f;
-            shadowPush.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
-            shadowPush.lightColorAndPad = glm::vec4(lightColor, 0.0f);
-            vkCmdPushConstants(ctx.commandBuffers[i], pipelineLayout,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(ObjectPushData), &shadowPush);
-            vkCmdDraw(ctx.commandBuffers[i], shadowVertexCount, 1, 0, 0);
-        }
-
-        // === 绘制球体 ===
-        vkCmdBindVertexBuffers(ctx.commandBuffers[i], 0, 1, &vertexBuffer, offsets);
-        for (size_t t = 0; t < targetPositions.size(); t++) {
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), targetPositions[t]);
-            model = glm::scale(model, glm::vec3(targetScales[t]));
-            glm::mat4 viewProj = proj * view * model;
-
-            ObjectPushData push;
-            push.viewProj = viewProj;
-            push.color = targetMaterials[t].color;
-            push.metallic = targetMaterials[t].metallic;
-            push.roughness = targetMaterials[t].roughness;
-            push.emissive_strength = targetMaterials[t].emissive_strength;
-            push.pad = 0.0f;
-            push.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
-            push.lightColorAndPad = glm::vec4(lightColor, 0.0f);
-
-            vkCmdPushConstants(ctx.commandBuffers[i], pipelineLayout,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(ObjectPushData), &push);
-            vkCmdDraw(ctx.commandBuffers[i], vertexCount, 1, 0, 0);
-        }
-
-        // === 绘制准星 ===
-        VkDeviceSize crosshairOffset = 0;
-        vkCmdBindVertexBuffers(ctx.commandBuffers[i], 0, 1, &crosshairVertexBuffer, &crosshairOffset);
-        ObjectPushData crosshairPush;
-        crosshairPush.viewProj = glm::mat4(1.0f);
-        crosshairPush.color = glm::vec4(0.85f, 0.56f, 0.66f, 1.0f);
-        crosshairPush.metallic = 0.0f;
-        crosshairPush.roughness = 0.5f;
-        crosshairPush.emissive_strength = 0.0f;
-        crosshairPush.pad = 0.0f;
-        crosshairPush.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
-        crosshairPush.lightColorAndPad = glm::vec4(lightColor, 0.0f);
-        vkCmdPushConstants(ctx.commandBuffers[i], pipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(ObjectPushData), &crosshairPush);
-        vkCmdDraw(ctx.commandBuffers[i], crosshairVertexCount, 1, 0, 0);
-
-        if (imgui) {
-            imgui->Render(ctx.commandBuffers[i]);
-        }
-
-        vkCmdEndRenderPass(ctx.commandBuffers[i]);
-        vkEndCommandBuffer(ctx.commandBuffers[i]);
+    // 绘制天空
+    {
+        VkDeviceSize skyOffset = 0;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyPipeline);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &skyVertexBuffer, &skyOffset);
+        SkyPushData skyPush;
+        skyPush.topColor = skyTopColor;
+        skyPush.bottomColor = skyBottomColor;
+        vkCmdPushConstants(cmd, skyPipelineLayout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(SkyPushData), &skyPush);
+        vkCmdDraw(cmd, 6, 1, 0, 0);
     }
+
+    // 绘制地面
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(cmd, 0, 1, &groundVertexBuffer, offsets);
+    ObjectPushData groundPush;
+    groundPush.viewProj = proj * view;
+    groundPush.color = glm::vec4(0.9f, 0.89f, 0.85f, 1.0f);
+    groundPush.metallic = 0.0f;
+    groundPush.roughness = 0.9f;
+    groundPush.emissive_strength = 0.0f;
+    groundPush.pad = 0.0f;
+    groundPush.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
+    groundPush.lightColorAndPad = glm::vec4(lightColor, 0.0f);
+    vkCmdPushConstants(cmd, pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(ObjectPushData), &groundPush);
+    vkCmdDraw(cmd, groundVertexCount, 1, 0, 0);
+
+    // 绘制阴影
+    for (size_t t = 0; t < targetPositions.size(); t++) {
+        glm::vec3 pos = targetPositions[t];
+        float scale = targetScales[t];
+        float heightAboveGround = pos.y - (-2.0f) - 0.5f * scale;
+        glm::vec3 shadowOffset(0.0f);
+        if (fabs(lightDir.y) > 0.001f) {
+            float shadowScale = 0.25f;
+            shadowOffset = -glm::vec3(lightDir.x, 0.0f, lightDir.z) * (heightAboveGround / lightDir.y) * shadowScale;
+        }
+        glm::vec3 shadowPos = glm::vec3(pos.x, -1.98f, pos.z) + shadowOffset;
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), shadowPos);
+        model = glm::scale(model, glm::vec3(scale, 1.0f, scale));
+        glm::mat4 viewProjShadow = proj * view * model;
+
+        vkCmdBindVertexBuffers(cmd, 0, 1, &shadowVertexBuffer, offsets);
+        ObjectPushData shadowPush;
+        shadowPush.viewProj = viewProjShadow;
+        shadowPush.color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        shadowPush.metallic = 0.0f;
+        shadowPush.roughness = 1.0f;
+        shadowPush.emissive_strength = 0.0f;
+        shadowPush.pad = 0.0f;
+        shadowPush.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
+        shadowPush.lightColorAndPad = glm::vec4(lightColor, 0.0f);
+        vkCmdPushConstants(cmd, pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(ObjectPushData), &shadowPush);
+        vkCmdDraw(cmd, shadowVertexCount, 1, 0, 0);
+    }
+
+    // 绘制球体
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, offsets);
+    for (size_t t = 0; t < targetPositions.size(); t++) {
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), targetPositions[t]);
+        model = glm::scale(model, glm::vec3(targetScales[t]));
+        glm::mat4 viewProj = proj * view * model;
+
+        ObjectPushData push;
+        push.viewProj = viewProj;
+        push.color = targetMaterials[t].color;
+        push.metallic = targetMaterials[t].metallic;
+        push.roughness = targetMaterials[t].roughness;
+        push.emissive_strength = targetMaterials[t].emissive_strength;
+        push.pad = 0.0f;
+        push.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
+        push.lightColorAndPad = glm::vec4(lightColor, 0.0f);
+
+        vkCmdPushConstants(cmd, pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(ObjectPushData), &push);
+        vkCmdDraw(cmd, vertexCount, 1, 0, 0);
+    }
+
+    // 绘制准星
+    VkDeviceSize crosshairOffset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &crosshairVertexBuffer, &crosshairOffset);
+    ObjectPushData crosshairPush;
+    crosshairPush.viewProj = glm::mat4(1.0f);
+    crosshairPush.color = glm::vec4(0.85f, 0.56f, 0.66f, 1.0f);
+    crosshairPush.metallic = 0.0f;
+    crosshairPush.roughness = 0.5f;
+    crosshairPush.emissive_strength = 0.0f;
+    crosshairPush.pad = 0.0f;
+    crosshairPush.lightDirAndIntensity = glm::vec4(lightDir, lightIntensity);
+    crosshairPush.lightColorAndPad = glm::vec4(lightColor, 0.0f);
+    vkCmdPushConstants(cmd, pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(ObjectPushData), &crosshairPush);
+    vkCmdDraw(cmd, crosshairVertexCount, 1, 0, 0);
+
+    if (imgui) {
+        imgui->Render(cmd);
+    }
+
+    vkCmdEndRenderPass(cmd);
+    vkEndCommandBuffer(cmd);
 }
 
 void Renderer::DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
@@ -791,47 +835,77 @@ void Renderer::DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
                          const glm::vec4& skyTopColor,
                          const glm::vec4& skyBottomColor,
                          ImGuiManager* imgui) {
-    vkWaitForFences(ctx.device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(ctx.device, 1, &inFlightFence);
+    // 等待当前帧上一次提交完成
+    vkWaitForFences(ctx.device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
-    vkDeviceWaitIdle(ctx.device);
-    RecordCommandBuffers(ctx, view, proj, targetPositions, targetScales, targetMaterials,
-                         lightDir, lightColor, lightIntensity,
-                         skyTopColor, skyBottomColor, imgui);
-
+    // 获取 swapchain image
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(ctx.device, ctx.swapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    VkResult acquireResult = vkAcquireNextImageKHR(
+        ctx.device, ctx.swapchain, UINT64_MAX,
+        imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+        // swapchain 失效：重建，本帧不再渲染
+        ctx.RecreateSwapchain(window);
+        RecreatePipeline(ctx);
+        return;
+    }
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
+        std::cerr << "vkAcquireNextImageKHR failed: " << acquireResult << std::endl;
+        return;
+    }
+
+    // 如果这张 image 正在被另一帧使用，等它完成
+    if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(ctx.device, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+    // 确认可以提交后才重置 fence
+    vkResetFences(ctx.device, 1, &inFlightFences[currentFrame]);
+
+    // 只录制当前 image 的命令缓冲
+    RecordCommandBuffer(ctx, imageIndex, view, proj, targetPositions, targetScales,
+                        targetMaterials, lightDir, lightColor, lightIntensity,
+                        skyTopColor, skyBottomColor, imgui);
 
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    VkSemaphore waitSem[] = {imageAvailableSemaphore};
+    VkSemaphore waitSem[] = {imageAvailableSemaphores[currentFrame]};
     VkPipelineStageFlags waitStage[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     si.waitSemaphoreCount = 1;
     si.pWaitSemaphores = waitSem;
     si.pWaitDstStageMask = waitStage;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &ctx.commandBuffers[imageIndex];
-    VkSemaphore sigSem[] = {renderFinishedSemaphore};
+    VkSemaphore signalSem[] = {renderFinishedSemaphores[imageIndex]};
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = sigSem;
+    si.pSignalSemaphores = signalSem;
 
-    vkQueueSubmit(ctx.graphicsQueue, 1, &si, inFlightFence);
+    vkQueueSubmit(ctx.graphicsQueue, 1, &si, inFlightFences[currentFrame]);
 
     VkPresentInfoKHR pi = {};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = sigSem;
+    pi.pWaitSemaphores = signalSem;
     pi.swapchainCount = 1;
     pi.pSwapchains = &ctx.swapchain;
     pi.pImageIndices = &imageIndex;
 
-    vkQueuePresentKHR(ctx.presentQueue, &pi);
+    VkResult presentResult = vkQueuePresentKHR(ctx.presentQueue, &pi);
+
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+        // 等待 GPU 完成对当前 swapchain 的使用，然后重建
+        vkDeviceWaitIdle(ctx.device);
+        ctx.RecreateSwapchain(window);
+        RecreatePipeline(ctx);
+    }
+
+    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void Renderer::Cleanup(VulkanContext& ctx) {
-    vkDestroyFence(ctx.device, inFlightFence, nullptr);
-    vkDestroySemaphore(ctx.device, renderFinishedSemaphore, nullptr);
-    vkDestroySemaphore(ctx.device, imageAvailableSemaphore, nullptr);
+    DestroySyncObjects(ctx);
 
     vkDestroyBuffer(ctx.device, crosshairVertexBuffer, nullptr);
     vkFreeMemory(ctx.device, crosshairVertexBufferMemory, nullptr);

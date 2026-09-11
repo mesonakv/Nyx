@@ -1,0 +1,218 @@
+Nyx 引擎开发文档
+版本 0.6.0
+1. 项目定位
+Nyx 是一个专用 FPS 瞄准训练引擎，强调极低输入延迟、干净视觉、氛围光照和轻量破坏体验。
+它不是通用引擎，而是为第一人称轻量动作体验量身定制的底层工具。
+
+核心目标
+输入延迟  5ms
+
+中端 GPU 稳定 1000+ FPS
+
+帧时间 P99  1.3ms
+
+包体  50 MB
+
+启动时间  1 秒
+
+当前实测性能
+指标	数据
+平均帧率	RTX 3060 Laptop 稳定 2000 FPS
+场景	9 目标球体 + 地面 + 准星 + 硬阴影 + 程序化天空
+内存	 100 MB
+启动时间	 1 秒
+帧时间标准差	 0.1 ms
+2. 当前项目结构
+text
+DDevNyxEngine
+├── NyxEngine              # 引擎核心
+│   ├── Core
+│   │   ├── VulkanContext.h.cpp
+│   │   └── ImGuiManager.h.cpp
+│   ├── Render
+│   │   ├── Renderer.h.cpp
+│   ├── Scene
+│   │   ├── Camera.h.cpp
+│   │   └── Material.h.cpp
+├── Game                   # 游戏内容（当前为测试内容）
+│   └── Target
+│       ├── TargetManager.h.cpp
+├── Shaders
+├── ThirdParty
+│   ├── SDL2
+│   ├── imgui
+│   └── glm
+├── CMakeLists.txt
+└── main.cpp
+当前结构的问题
+main.cpp 承担过多职责，包含引擎初始化、主循环、游戏逻辑、ImGui 面板
+
+没有统一的 NyxEngine 实例，Game 无法真正“调用引擎”
+
+输入、光照、编辑器逻辑与 main 高度耦合
+
+TargetManager 混合了渲染数据和游戏逻辑
+
+3. 架构升级目标
+3.1 引擎实例抽象
+新增 NyxEngine 类，提供统一的引擎接口：
+
+cpp
+class NyxEngine {
+public
+    void Initialize(SDL_Window window, const DisplaySettings& settings);
+    void Shutdown();
+
+    VulkanContext& GetVulkanContext();
+    Renderer& GetRenderer();
+    InputSystem& GetInputSystem();
+    Camera& GetMainCamera();
+    LightingSystem& GetLightingSystem();
+
+    void BeginFrame();
+    void EndFrame();
+};
+3.2 游戏侧依赖引擎接口
+cpp
+class MyGame {
+public
+    void Initialize(NyxEngine& engine);
+    void Update(float dt);
+    void Render();
+};
+3.3 main.cpp 变为启动器
+cpp
+int main() {
+    NyxEngine engine;
+    engine.Initialize(window, settings);
+
+    MyGame game;
+    game.Initialize(engine);
+
+    while (running) {
+        engine.BeginFrame();
+        game.Update(dt);
+        game.Render();
+        engine.EndFrame();
+    }
+
+    engine.Shutdown();
+}
+4. 输入系统独立
+将鼠标捕获、键盘状态、F1 切换从 main.cpp 迁移至 NyxEngineInput。
+
+InputSystem：统一管理鼠标键盘
+
+未来支持灵敏度曲线、按键映射、手柄输入
+
+5. 光照系统抽象
+将时间光照、天空颜色、光强计算从 main.cpp 迁移至 NyxEngineRenderLightingSystem。
+
+时间驱动日光月光
+
+天空颜色计算
+
+光强混合
+
+6. 编辑器面板分离
+将 ImGui 面板拆分为独立文件：
+
+text
+Editor
+├── EditorPanel.h.cpp
+├── DisplaySettingsPanel.h.cpp
+├── MaterialPanel.h.cpp
+├── MovementPanel.h.cpp
+├── LightingPanel.h.cpp
+└── PerformancePanel.h.cpp
+7. 功能优先级
+优先级	功能	说明
+1	引擎实例抽象 NyxEngine	架构升级的基础
+2	输入系统独立	手感与扩展性的关键
+3	光照系统抽象	天气、闪电的基础
+4	编辑器面板分离	让 main 保持干净
+5	闪电事件系统	程序化氛围效果
+6	配置保存加载	JSON 驱动
+7	PNG 准星	2D UI 起点
+8	轻物理碎片	需要实例化渲染
+9	PrismSpectra	视觉旗舰，依赖反射系统
+10	天气系统完整	雨、雪等，与粒子复用
+8. 视觉规范
+主色板
+颜色	色值	用途
+黑	#0D0E11	编辑器背景、训练场景暗部
+天蓝	#4FC3F7	准星、目标、按钮高亮
+纯白	#F5F7FA	文字、关键强调
+参考：CS 火神 AK 的冷黑 + 亮蓝 + 白刻线风格。
+
+9. 旗舰技术：PrismSpectra
+PrismSpectra 是 Nyx 的材质光学质感系统，包含菲涅尔、干净反射、清晰折射、色散与克制的粉蓝泛光。
+适用于玻璃、珠光、金属、油墨等材质，是 Nyx 视觉语言的核心技术之一。
+
+技术组件
+菲涅尔：正面弱反射，斜角强反射
+
+干净反射：反射天空和纯色几何体，不模糊
+
+清晰折射：透过玻璃的目标依然锐利，仅轻微偏移
+
+色散：高光边缘出现极淡的蓝紫粉偏移
+
+微泛光：高光周围极克制的辉光
+
+设计哲学
+克制：粉蓝泛光只在高光边缘出现，且非常轻微
+
+真实之上：物理正确，但更强调干净的视觉体验
+
+可复用：同一套光学规则应用于玻璃、珠光、金属、油墨
+
+10. 路线图
+短期（架构重构）
+引擎实例抽象
+
+输入系统独立
+
+光照系统抽象
+
+编辑器面板分离
+
+中期（氛围与配置）
+闪电事件系统
+
+配置保存加载
+
+PNG 准星
+
+长期（视觉与物理）
+PrismSpectra 基础实现
+
+轻物理碎片
+
+完整天气系统
+
+音频系统
+
+11. 工程哲学
+C++ 但 C 风格
+
+禁用异常、RTTI
+
+配置驱动
+
+专用而非通用
+
+克制：不做关节、布料、流体、车辆物理
+
+12. 开发日志
+2026.09.07：引擎雏形完成，Vulkan 渲染，球体射击，ImGui 编辑器
+
+2026.09.08：显示设置、MSAA、光照、阴影、天空、目标移动
+
+2026.09.10：项目结构重构，引擎游戏编辑器分层，摄像机反转修复
+
+下一步：引擎实例抽象 + 输入系统独立
+
+文档版本：0.6.0
+最后更新：2026年9月10日
+状态：进入架构重构阶段，为后续功能奠定基础
