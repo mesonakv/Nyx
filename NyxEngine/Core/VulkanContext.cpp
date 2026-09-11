@@ -1,5 +1,5 @@
 #include "VulkanContext.h"
-#include <iostream>
+#include "Logger.h"
 #include <algorithm>
 
 static void SetWindowFullscreen(SDL_Window* window, WindowMode mode) {
@@ -60,7 +60,7 @@ void VulkanContext::Initialize(SDL_Window* window, const DisplaySettings& initia
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    std::cout << "GPU: " << props.deviceName << std::endl;
+    NYX_LOG_INFO("GPU: %s", props.deviceName);
 
     uint32_t count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
@@ -216,8 +216,7 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     sci.clipped = VK_TRUE;
 
     if (vkCreateSwapchainKHR(device, &sci, nullptr, &swapchain) != VK_SUCCESS) {
-        std::cerr << "Failed to create swapchain" << std::endl;
-        exit(1);
+        NYX_LOG_FATAL("Failed to create swapchain");
     }
 
     uint32_t scImageCount = 0;
@@ -392,7 +391,7 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
 
     SDL_SetWindowSize(window, (int)swapchainExtent.width, (int)swapchainExtent.height);
 
-    std::cout << "Swapchain recreated with MSAA x" << settings.msaaSamples << std::endl;
+    NYX_LOG_INFO("Swapchain recreated with MSAA x%d", settings.msaaSamples);
 }
 
 void VulkanContext::Cleanup() {
@@ -412,6 +411,6 @@ uint32_t VulkanContext::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
             return i;
         }
     }
-    std::cerr << "Failed to find memory type" << std::endl;
-    exit(1);
+    NYX_LOG_FATAL("Failed to find memory type");
+    return 0;  // 不会到这里，但满足编译器
 }

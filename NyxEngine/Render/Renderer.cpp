@@ -1,6 +1,6 @@
 #include "Renderer.h"
+#include "Logger.h"
 #include <fstream>
-#include <iostream>
 #include <cstring>
 #include <cmath>
 
@@ -23,8 +23,7 @@ struct ObjectPushData {
 static std::vector<char> ReadFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Failed to open: " << filename << std::endl;
-        exit(1);
+        NYX_LOG_FATAL("Failed to open: %s", filename.c_str());
     }
     size_t size = (size_t)file.tellg();
     std::vector<char> buffer(size);
@@ -69,8 +68,7 @@ void Renderer::CreateDescriptorSetLayout(VulkanContext& ctx) {
     layoutInfo.pBindings = &uboBinding;
 
     if (vkCreateDescriptorSetLayout(ctx.device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-        std::cerr << "Failed to create descriptor set layout" << std::endl;
-        exit(1);
+        NYX_LOG_FATAL("Failed to create descriptor set layout");
     }
 }
 
@@ -117,8 +115,7 @@ void Renderer::CreateDescriptorPool(VulkanContext& ctx) {
     pi.maxSets = MAX_FRAMES_IN_FLIGHT;
 
     if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS) {
-        std::cerr << "Failed to create descriptor pool" << std::endl;
-        exit(1);
+        NYX_LOG_FATAL("Failed to create descriptor pool");
     }
 }
 
@@ -133,8 +130,7 @@ void Renderer::CreateDescriptorSets(VulkanContext& ctx) {
 
     descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     if (vkAllocateDescriptorSets(ctx.device, &ai, descriptorSets.data()) != VK_SUCCESS) {
-        std::cerr << "Failed to allocate descriptor sets" << std::endl;
-        exit(1);
+        NYX_LOG_FATAL("Failed to allocate descriptor sets");
     }
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -259,7 +255,7 @@ void Renderer::CreateSkyMesh(VulkanContext& ctx) {
     memcpy(data, verts.data(), (size_t)bufferSize);
     vkUnmapMemory(ctx.device, skyVertexBufferMemory);
 
-    std::cout << "Sky mesh created" << std::endl;
+    NYX_LOG_INFO("Sky mesh created");
 }
 
 void Renderer::CreateBallMesh(VulkanContext& ctx) {
@@ -325,7 +321,7 @@ void Renderer::CreateBallMesh(VulkanContext& ctx) {
     memcpy(data, triVerts.data(), (size_t)bufferSize);
     vkUnmapMemory(ctx.device, vertexBufferMemory);
 
-    std::cout << "Ball mesh: " << vertexCount << " vertices" << std::endl;
+    NYX_LOG_INFO("Ball mesh: %u vertices", vertexCount);
 }
 
 void Renderer::CreateCrosshairMesh(VulkanContext& ctx) {
@@ -379,7 +375,7 @@ void Renderer::CreateCrosshairMesh(VulkanContext& ctx) {
     memcpy(data, verts.data(), (size_t)bufferSize);
     vkUnmapMemory(ctx.device, crosshairVertexBufferMemory);
 
-    std::cout << "Crosshair mesh: " << crosshairVertexCount << " vertices" << std::endl;
+    NYX_LOG_INFO("Crosshair mesh: %u vertices", crosshairVertexCount);
 }
 
 void Renderer::CreateGroundMesh(VulkanContext& ctx) {
@@ -431,7 +427,7 @@ void Renderer::CreateGroundMesh(VulkanContext& ctx) {
     memcpy(data, verts.data(), (size_t)bufferSize);
     vkUnmapMemory(ctx.device, groundVertexBufferMemory);
 
-    std::cout << "Ground mesh: " << groundVertexCount << " vertices" << std::endl;
+    NYX_LOG_INFO("Ground mesh: %u vertices", groundVertexCount);
 }
 
 void Renderer::CreateShadowMesh(VulkanContext& ctx) {
@@ -490,7 +486,7 @@ void Renderer::CreateShadowMesh(VulkanContext& ctx) {
     memcpy(data, triVerts.data(), (size_t)bufferSize);
     vkUnmapMemory(ctx.device, shadowVertexBufferMemory);
 
-    std::cout << "Shadow mesh: " << shadowVertexCount << " vertices" << std::endl;
+    NYX_LOG_INFO("Shadow mesh: %u vertices", shadowVertexCount);
 }
 
 // ============ Pipeline ============
@@ -622,7 +618,7 @@ void Renderer::CreateGraphicsPipeline(VulkanContext& ctx) {
     vkDestroyShaderModule(ctx.device, vertModule, nullptr);
     vkDestroyShaderModule(ctx.device, fragModule, nullptr);
 
-    std::cout << "Pipeline created with MSAA x" << ctx.settings.msaaSamples << std::endl;
+    NYX_LOG_INFO("Pipeline created with MSAA x%d", ctx.settings.msaaSamples);
 }
 
 void Renderer::CreateSkyPipeline(VulkanContext& ctx) {
@@ -750,7 +746,7 @@ void Renderer::CreateSkyPipeline(VulkanContext& ctx) {
     vkDestroyShaderModule(ctx.device, vertModule, nullptr);
     vkDestroyShaderModule(ctx.device, fragModule, nullptr);
 
-    std::cout << "Sky pipeline created" << std::endl;
+    NYX_LOG_INFO("Sky pipeline created");
 }
 
 void Renderer::RecreatePipeline(VulkanContext& ctx) {
@@ -963,7 +959,7 @@ void Renderer::DrawFrame(VulkanContext& ctx, glm::mat4 view, glm::mat4 proj,
         return;
     }
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
-        std::cerr << "vkAcquireNextImageKHR failed: " << acquireResult << std::endl;
+        NYX_LOG_ERROR("vkAcquireNextImageKHR failed: %d", (int)acquireResult);
         return;
     }
 

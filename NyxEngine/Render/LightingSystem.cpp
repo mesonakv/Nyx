@@ -1,4 +1,5 @@
 #include "LightingSystem.h"
+#include "Core/NyxMath.h"
 #include <algorithm>
 #include <cmath>
 
@@ -72,7 +73,7 @@ LightingData LightingSystem::Update() const {
 
     // ---------- 太阳/月亮方向 ----------
     // timeOfDay: 0.00 午夜, 0.25 日出, 0.50 正午, 0.75 日落
-    const float sunAngle = (timeOfDay - 0.25f) * 2.0f * 3.14159265f;
+    const float sunAngle = (timeOfDay - 0.25f) * nyx::TwoPi;
     out.lightDir = glm::normalize(glm::vec3(cos(sunAngle), sin(sunAngle), 0.3f));
 
     // ---------- 强度 ----------

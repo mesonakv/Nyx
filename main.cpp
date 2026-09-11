@@ -9,6 +9,11 @@
 #include <numeric>
 
 #include "NyxEngine/NyxEngine.h"
+#include "NyxEngine/Core/Logger.h"
+#include "NyxEngine/Core/Memory.h"
+#include "NyxEngine/Core/Platform.h"
+#include "NyxEngine/Core/NyxMath.h"
+#include "NyxEngine/Core/FileSystem.h"
 #include "NyxEngine/Core/VulkanContext.h"
 #include "NyxEngine/Scene/Material.h"
 #include "NyxEngine/Editor/EditorPanel.h"
@@ -37,6 +42,25 @@ int main(int argc, char* argv[]) {
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     SDL_Init(SDL_INIT_VIDEO);
     SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+
+    // ============ Logger + Memory + Platform 初始化 ============
+    LoggerConfig logConfig;
+#ifdef _DEBUG
+    logConfig.minLevel = LogLevel::Trace;
+#else
+    logConfig.minLevel = LogLevel::Info;
+#endif
+    logConfig.toConsole = true;
+    logConfig.toFile = false;
+    logConfig.toDebugOutput = true;
+    Logger::Initialize(logConfig);
+
+    Memory::Initialize();
+    Platform::Initialize();
+
+    NYX_LOG_INFO("NyxEngine starting...");
+    NYX_LOG_INFO("Executable dir: %s", FileSystem::GetExecutableDir().c_str());
+    NYX_LOG_INFO("Working dir:    %s", FileSystem::GetWorkingDir().c_str());
 
     DisplaySettings displaySettings;
     displaySettings.width = 1280;
@@ -288,7 +312,14 @@ int main(int argc, char* argv[]) {
     }
 
     // ============ 退出 ============
+    NYX_LOG_INFO("NyxEngine shutting down...");
+
+    Memory::PrintStats();
+
     engine.Shutdown();
+    Platform::Shutdown();
+    Memory::Shutdown();
+    Logger::Shutdown();
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;

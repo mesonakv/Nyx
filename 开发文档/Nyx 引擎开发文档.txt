@@ -1,218 +1,918 @@
 Nyx 引擎开发文档
-版本 0.6.0
-1. 项目定位
-Nyx 是一个专用 FPS 瞄准训练引擎，强调极低输入延迟、干净视觉、氛围光照和轻量破坏体验。
-它不是通用引擎，而是为第一人称轻量动作体验量身定制的底层工具。
+版本 2.0.0
+状态：进入引擎基础设施一次建完阶段
+最后更新：2026-09-12
 
-核心目标
-输入延迟  5ms
+1. 项目概述
+Nyx 是一个模块化专用游戏引擎，同时支撑两个平行应用：
 
-中端 GPU 稳定 1000+ FPS
+Nyx Trainer：第一人称 FPS 瞄准训练器
 
-帧时间 P99  1.3ms
+Terra：球体地球模拟器级别的巨型 RPG
 
-包体  50 MB
+Nyx 不是通用引擎，不做"什么游戏都能做"的承诺。它为这两个应用服务，并为它们做足基础设施，使得游戏开发阶段尽量不改引擎。
 
-启动时间  1 秒
+1.1 核心设计理念
+理念	含义
+专用而非通用	只为两个已知应用服务，不做无意义抽象
+模块化	核心层 + 应用层，编译可选，互不拖累
+C++ 但 C 风格	禁用异常、RTTI，无隐藏开销
+配置驱动	一切可调参数集中在 EngineConfig
+克制	不做不需要的功能
+一次建好	引擎基础设施一次做完，游戏阶段不改引擎
+训练器优先	训练器是第一个产品，Terra 是最终愿景
+1.2 工程约束
+编译器：MSVC（Windows 首选）
 
-当前实测性能
-指标	数据
-平均帧率	RTX 3060 Laptop 稳定 2000 FPS
-场景	9 目标球体 + 地面 + 准星 + 硬阴影 + 程序化天空
-内存	 100 MB
-启动时间	 1 秒
-帧时间标准差	 0.1 ms
-2. 当前项目结构
+C++ 标准：C++17
+
+构建系统：CMake
+
+不使用异常、RTTI
+
+不使用第三方重量级库（除 SDL2、Vulkan、ImGui、glm 外）
+
+线程安全：核心系统默认线程安全
+
+零分配热路径：每帧关键路径不分配堆内存
+
+2. 架构总览
+2.1 三层架构
 text
-DDevNyxEngine
-├── NyxEngine              # 引擎核心
-│   ├── Core
-│   │   ├── VulkanContext.h.cpp
-│   │   └── ImGuiManager.h.cpp
-│   ├── Render
-│   │   ├── Renderer.h.cpp
-│   ├── Scene
-│   │   ├── Camera.h.cpp
-│   │   └── Material.h.cpp
-├── Game                   # 游戏内容（当前为测试内容）
-│   └── Target
-│       ├── TargetManager.h.cpp
-├── Shaders
-├── ThirdParty
-│   ├── SDL2
-│   ├── imgui
-│   └── glm
-├── CMakeLists.txt
-└── main.cpp
-当前结构的问题
-main.cpp 承担过多职责，包含引擎初始化、主循环、游戏逻辑、ImGui 面板
+┌─────────────────────────────────────────────────┐
+│                  应用层                          │
+│  ┌──────────────────┐  ┌──────────────────────┐ │
+│  │  Nyx Trainer     │  │      Terra           │ │
+│  │  (编译可选)       │  │  (编译可选)          │ │
+│  └──────────────────┘  └──────────────────────┘ │
+├─────────────────────────────────────────────────┤
+│                  核心层                          │
+│  渲染 / 输入 / 光照 / 音频 / 资源 / 编辑器       │
+│  配置 / 日志 / 数学 / 文件 / 事件 / 任务         │
+│  （两种模式共享）                                │
+├─────────────────────────────────────────────────┤
+│                  平台层                          │
+│  SDL2 / Vulkan / Windows / (未来) Linux         │
+└─────────────────────────────────────────────────┘
+2.2 模块清单
+核心层（永远编译）
 
-没有统一的 NyxEngine 实例，Game 无法真正“调用引擎”
+模块	状态	说明
+VulkanContext	✅ 完成	Vulkan 设备、swapchain、render pass
+Renderer	✅ 完成	主渲染管线
+InputSystem	✅ 完成	鼠标键盘事件采集
+LightingSystem	✅ 完成	基础光照与天空
+EngineConfig	✅ 完成	配置分组结构
+EditorPanel	✅ 完成	6 个面板拆分
+NyxEngine	✅ 完成	引擎实例容器
+Logger	❌ 待建	统一日志
+Memory	❌ 待建	内存分配器
+Math	❌ 待建	数学封装
+FileSystem	❌ 待建	文件 IO
+Platform	❌ 待建	平台抽象
+Serialization	❌ 待建	JSON / 二进制
+Event	❌ 待建	事件系统
+JobSystem	❌ 待建	线程池
+Resource	❌ 待建	资源管理
+Audio	❌ 待建	音频引擎
+Profiler	❌ 待建	性能计时
+MemoryProfiler	❌ 待建	内存追踪
+CrashHandler	❌ 待建	崩溃捕获
+Packaging	❌ 待建	打包发布
+ConfigPersistence	❌ 待建	配置持久化
+Reflection	❌ 待建	轻反射
+应用层（编译可选）
 
-输入、光照、编辑器逻辑与 main 高度耦合
+模块	应用	状态
+TargetManager	Trainer	✅ 完成
+MovementPanel	Trainer	✅ 完成
+AimTrainingLogic	Trainer	⚪ 待建
+ECEF 坐标系统	Terra	⚪ 待建
+WorldState	Terra	⚪ 待建
+瓦片系统	Terra	⚪ 待建
+流式加载	Terra	⚪ 待建
+球面大气散射	Terra	⚪ 待建
+气象模拟	Terra	⚪ 待建
+载具系统	Terra	⚪ 待建
+网络同步	Terra	⚪ 待建
+2.3 模块化原则
+编译级隔离：应用层模块默认不编译进不相关的二进制
 
-TargetManager 混合了渲染数据和游戏逻辑
+运行时可选：核心层子系统可以按需初始化
 
-3. 架构升级目标
-3.1 引擎实例抽象
-新增 NyxEngine 类，提供统一的引擎接口：
+核心层保持轻：不为应用层引入不必要的抽象
+
+接口稳定：模块间接口一旦确定，不轻易改变
+
+2.4 CMake 开关
+cmake
+option(NYX_BUILD_CORE    "Build core modules"    ON)
+option(NYX_BUILD_TRAINER "Build Nyx Trainer"     ON)
+option(NYX_BUILD_TERRA   "Build Terra"           OFF)
+option(NYX_BUILD_TOOLS   "Build tools"           ON)
+
+# 训练器二进制不包含任何 Terra 代码
+# Terra 二进制包含核心层 + Terra 层
+3. 现有模块
+3.1 VulkanContext
+职责：Vulkan 设备、swapchain、render pass、命令池管理。
+
+关键特性：
+
+支持三种窗口模式（Windowed / Borderless / Exclusive Fullscreen）
+
+多帧并行（MAX_FRAMES_IN_FLIGHT = 2）
+
+swapchain 重建安全
+
+MSAA 支持（1/2/4/8）
+
+深度缓冲 + MSAA 颜色附件
+
+接口：
+
+cpp
+class VulkanContext {
+public:
+    void Initialize(SDL_Window*, const DisplaySettings&);
+    void Shutdown();
+    void RecreateSwapchain(SDL_Window*);
+    void DestroySwapchainResources();
+    uint32_t FindMemoryType(uint32_t, VkMemoryPropertyFlags);
+    VkSampleCountFlagBits GetMSAASamples() const;
+};
+3.2 Renderer
+职责：主渲染管线，网格管理，命令缓冲录制。
+
+关键特性：
+
+每帧 uniform buffer（FrameUniforms）
+
+每物体 push constant（ObjectPushData，96 字节）
+
+支持屏幕空间对象（准星）
+
+天空盒渲染
+
+阴影投射
+
+接口：
+
+cpp
+class Renderer {
+public:
+    void Initialize(VulkanContext&, SDL_Window*);
+    void DrawFrame(VulkanContext&, ...);
+    void RecreatePipeline(VulkanContext&);
+    void Cleanup(VulkanContext&);
+};
+3.3 InputSystem
+职责：SDL 事件采集，鼠标/键盘状态缓存。
+
+设计原则：
+
+只采集，不解释（不知道 F1 是切编辑器）
+
+定长 bool 数组（无 hash，无分配）
+
+每帧 BeginFrame / ProcessEvent / EndFrame
+
+接口：
+
+cpp
+class InputSystem {
+public:
+    float GetMouseDeltaX() const;
+    float GetMouseDeltaY() const;
+    bool IsKeyDown(SDL_Scancode) const;
+    bool WasKeyPressed(SDL_Scancode) const;
+    bool WasKeyReleased(SDL_Scancode) const;
+    void SetMouseCaptured(bool);
+    bool ShouldQuit() const;
+};
+3.4 LightingSystem
+职责：从 EngineConfig 计算光照数据。
+
+关键特性：
+
+天空关键帧插值
+
+太阳/月亮方向与颜色
+
+环境光跟随天空
+
+接口：
+
+cpp
+class LightingSystem {
+public:
+    void Initialize(EngineConfig&);
+    LightingData Update() const;
+};
+3.5 EngineConfig
+职责：集中管理引擎层可调参数。
+
+结构：
+
+cpp
+struct EngineConfig {
+    LightingConfig lighting;
+    CameraConfig camera;
+    RenderConfig render;
+    // 未来扩展：AudioConfig, NetworkConfig, WorldConfig...
+};
+3.6 EditorPanel
+职责：编辑器 UI 框架。
+
+组成：
+
+CameraPanel
+
+MaterialPanel
+
+TargetMovementPanel
+
+DisplaySettingsPanel
+
+LightingPanel
+
+PerformancePanel
+
+接口：
+
+cpp
+class EditorPanel {
+public:
+    struct Context { ... };
+    void Initialize(const Context&);
+    void Draw();
+};
+3.7 NyxEngine
+职责：引擎实例容器，持有所有子系统。
+
+接口：
 
 cpp
 class NyxEngine {
-public
-    void Initialize(SDL_Window window, const DisplaySettings& settings);
+public:
+    void Initialize(SDL_Window*, const DisplaySettings&);
     void Shutdown();
-
-    VulkanContext& GetVulkanContext();
-    Renderer& GetRenderer();
-    InputSystem& GetInputSystem();
-    Camera& GetMainCamera();
-    LightingSystem& GetLightingSystem();
-
     void BeginFrame();
     void EndFrame();
+    // 访问器...
 };
-3.2 游戏侧依赖引擎接口
+4. 待建模块详细设计
+4.1 Logger（批次 1）
+职责：统一日志输出。
+
+特性：
+
+分级（Trace / Debug / Info / Warn / Error / Fatal）
+
+输出目标（控制台、文件、VS 输出窗口）
+
+线程安全
+
+零分配（预分配缓冲区）
+
+格式化支持
+
+编译期可裁剪（Release 下 Trace/Debug 不编译）
+
+接口：
+
 cpp
-class MyGame {
-public
-    void Initialize(NyxEngine& engine);
-    void Update(float dt);
-    void Render();
+enum class LogLevel { Trace, Debug, Info, Warn, Error, Fatal };
+
+class Logger {
+public:
+    static void Initialize(const LoggerConfig&);
+    static void Shutdown();
+    static void Log(LogLevel, const char* file, int line, const char* fmt, ...);
+    static void SetLevel(LogLevel);
+    static void SetOutputFile(const char* path);
 };
-3.3 main.cpp 变为启动器
+
+#define LOG_TRACE(...) Logger::Log(LogLevel::Trace, __FILE__, __LINE__, __VA_ARGS__)
+#define LOG_INFO(...)  Logger::Log(LogLevel::Info,  __FILE__, __LINE__, __VA_ARGS__)
+#define LOG_ERROR(...) Logger::Log(LogLevel::Error, __FILE__, __LINE__, __VA_ARGS__)
+// ...
+4.2 Memory（批次 1）
+职责：内存分配器封装，追踪。
+
+特性：
+
+全局默认分配器（可替换）
+
+分配追踪（Debug 下记录大小、文件、行号）
+
+内存分类（渲染、音频、资源、游戏）
+
+统计输出
+
+接口：
+
 cpp
-int main() {
-    NyxEngine engine;
-    engine.Initialize(window, settings);
+class Memory {
+public:
+    static void* Allocate(size_t size, const char* tag, const char* file, int line);
+    static void  Free(void* ptr);
+    static void  PrintStats();
+};
 
-    MyGame game;
-    game.Initialize(engine);
+#define NYX_NEW(T, tag) new (Memory::Allocate(sizeof(T), tag, __FILE__, __LINE__)) T
+#define NYX_DELETE(ptr) do { ptr->~T(); Memory::Free(ptr); } while(0)
+4.3 Math（批次 1）
+职责：统一数学 API，封装 glm。
 
-    while (running) {
-        engine.BeginFrame();
-        game.Update(dt);
-        game.Render();
-        engine.EndFrame();
-    }
+特性：
 
-    engine.Shutdown();
+类型别名（Vec3 = glm::vec3）
+
+常用函数（Clamp、Lerp、SmoothStep）
+
+常量（PI、DegToRad、RadToDeg）
+
+不重新造轮子，只封装
+
+接口：
+
+cpp
+namespace nyx {
+    using Vec2 = glm::vec2;
+    using Vec3 = glm::vec3;
+    using Vec4 = glm::vec4;
+    using Mat4 = glm::mat4;
+
+    constexpr float PI = 3.14159265358979323846f;
+    inline float DegToRad(float d) { return d * PI / 180.0f; }
+    inline float RadToDeg(float r) { return r * 180.0f / PI; }
+    // ...
 }
-4. 输入系统独立
-将鼠标捕获、键盘状态、F1 切换从 main.cpp 迁移至 NyxEngineInput。
+4.4 FileSystem（批次 1）
+职责：文件 IO，路径处理。
 
-InputSystem：统一管理鼠标键盘
+特性：
 
-未来支持灵敏度曲线、按键映射、手柄输入
+跨平台路径（/ 与 \）
 
-5. 光照系统抽象
-将时间光照、天空颜色、光强计算从 main.cpp 迁移至 NyxEngineRenderLightingSystem。
+文件读/写/存在检查
 
-时间驱动日光月光
+目录枚举
 
-天空颜色计算
+异步 IO（与 JobSystem 协作）
 
-光强混合
+接口：
 
-6. 编辑器面板分离
-将 ImGui 面板拆分为独立文件：
+cpp
+class FileSystem {
+public:
+    static std::vector<char> ReadFile(const std::string& path);
+    static bool WriteFile(const std::string& path, const void* data, size_t size);
+    static bool Exists(const std::string& path);
+    static std::string GetExecutableDir();
+    static std::string JoinPaths(const std::string& a, const std::string& b);
+};
+4.5 Platform（批次 1）
+职责：隔离操作系统 API。
 
-text
-Editor
-├── EditorPanel.h.cpp
-├── DisplaySettingsPanel.h.cpp
-├── MaterialPanel.h.cpp
-├── MovementPanel.h.cpp
-├── LightingPanel.h.cpp
-└── PerformancePanel.h.cpp
-7. 功能优先级
-优先级	功能	说明
-1	引擎实例抽象 NyxEngine	架构升级的基础
-2	输入系统独立	手感与扩展性的关键
-3	光照系统抽象	天气、闪电的基础
-4	编辑器面板分离	让 main 保持干净
-5	闪电事件系统	程序化氛围效果
-6	配置保存加载	JSON 驱动
-7	PNG 准星	2D UI 起点
-8	轻物理碎片	需要实例化渲染
-9	PrismSpectra	视觉旗舰，依赖反射系统
-10	天气系统完整	雨、雪等，与粒子复用
-8. 视觉规范
-主色板
+特性：
+
+高精度计时
+
+动态库加载
+
+线程 API（或直接用 std::thread）
+
+平台判断
+
+接口：
+
+cpp
+class Platform {
+public:
+    static void Initialize();
+    static uint64_t GetHighResTimer();
+    static uint64_t GetTimerFrequency();
+    static void Sleep(uint32_t ms);
+    static const char* GetPlatformName();
+};
+4.6 Serialization（批次 2）
+职责：JSON / 二进制序列化。
+
+特性：
+
+JSON 读写（配置、存档）
+
+二进制读写（资源瓦片）
+
+与轻反射协作
+
+接口：
+
+cpp
+class JsonWriter {
+public:
+    void BeginObject(const char* key);
+    void EndObject();
+    void Write(const char* key, int value);
+    void Write(const char* key, float value);
+    void Write(const char* key, const std::string& value);
+    std::string ToString();
+};
+4.7 Event（批次 2）
+职责：事件总线。
+
+特性：
+
+类型安全
+
+无分配（预注册）
+
+同步派发（不做异步）
+
+接口：
+
+cpp
+using EventHandle = uint32_t;
+
+class EventSystem {
+public:
+    template<typename T>
+    EventHandle Subscribe(std::function<void(const T&)> callback);
+    void Unsubscribe(EventHandle);
+    template<typename T>
+    void Emit(const T& event);
+};
+4.8 JobSystem（批次 2）
+职责：线程池，异步任务。
+
+特性：
+
+简单任务队列
+
+线程池（CPU 核心数 - 1）
+
+任务依赖（未来可扩展）
+
+与 FileSystem、Resource 协作
+
+接口：
+
+cpp
+class JobSystem {
+public:
+    void Initialize(uint32_t threadCount = 0);  // 0 = 自动
+    void Shutdown();
+    void Submit(std::function<void()> job);
+    void WaitAll();
+};
+4.9 Resource（批次 3）
+职责：资源加载、引用计数、缓存。
+
+特性：
+
+异步加载
+
+引用计数
+
+缓存（LRU）
+
+资源类型注册
+
+接口：
+
+cpp
+template<typename T>
+class ResourceHandle {
+    // 引用计数包装
+};
+
+class ResourceManager {
+public:
+    template<typename T>
+    ResourceHandle<T> Load(const std::string& path);
+    void Update();  // 处理异步完成
+};
+4.10 Audio（批次 3）
+职责：音频引擎。
+
+后端：miniaudio（单头文件，跨平台，低延迟）
+
+特性：
+
+低延迟播放
+
+空间音频（3D 定位）
+
+音量、音高控制
+
+音频组（Master / SFX / Music / UI）
+
+流式播放（长音频）
+
+接口：
+
+cpp
+class AudioSystem {
+public:
+    void Initialize();
+    void Shutdown();
+    void Update(float dt);
+
+    SoundHandle Play(const std::string& path, const PlayParams&);
+    void Stop(SoundHandle);
+    void SetVolume(AudioGroup, float);
+    void SetListenerPosition(const Vec3& pos, const Vec3& forward, const Vec3& up);
+};
+4.11 Profiler（批次 3）
+职责：性能计时，采样。
+
+特性：
+
+作用域计时（RAII）
+
+帧时间统计（Avg / P99 / StdDev）
+
+CPU / GPU 分开
+
+输出到编辑器面板
+
+接口：
+
+cpp
+class ScopedTimer {
+public:
+    ScopedTimer(const char* name);
+    ~ScopedTimer();
+};
+
+#define NYX_PROFILE_SCOPE(name) ScopedTimer _timer_##__LINE__(name)
+
+class Profiler {
+public:
+    static void BeginFrame();
+    static void EndFrame();
+    static void PrintStats();
+};
+4.12 MemoryProfiler（批次 3）
+职责：内存追踪。
+
+特性：
+
+分类统计（渲染、音频、资源）
+
+峰值记录
+
+泄漏检测（Debug）
+
+4.13 CrashHandler（批次 3）
+职责：崩溃捕获、堆栈。
+
+特性：
+
+Windows SEH
+
+堆栈符号化
+
+Mini dump 文件
+
+崩溃日志
+
+4.14 Packaging（批次 4）
+职责：资源烘焙、打包。
+
+特性：
+
+资源格式转换（源资源 → 运行时格式）
+
+打包成单文件或目录
+
+版本控制
+
+4.15 ConfigPersistence（批次 4）
+职责：配置读写。
+
+特性：
+
+JSON 序列化
+
+默认值合并
+
+版本迁移
+
+4.16 Reflection（批次 4）
+职责：轻反射。
+
+特性：
+
+宏或代码生成
+
+序列化支持
+
+编辑器自动 UI 生成
+
+5. 关键设计决策
+5.1 容器策略
+混合：
+
+使用 std::vector、std::string 等标准容器
+
+通过自定义 allocator 控制分配
+
+不自己写 vector、string
+
+理由：STL 成熟、稳定，重复造轮子无收益。自定义分配器满足追踪和优化需求。
+
+5.2 反射策略
+轻反射：
+
+宏或代码生成
+
+支持序列化 + 编辑器自动 UI
+
+不做运行时完整类型信息
+
+理由：Config、Resource、Editor 三处受益巨大，成本可控。
+
+5.3 JobSystem 策略
+先做简单线程池：
+
+一个任务队列
+
+N 个 worker 线程
+
+不支持任务依赖
+
+理由：Terra 的流式加载会需要更多，但那是 Terra 阶段的事。
+
+5.4 音频后端
+miniaudio：
+
+单头文件
+
+跨平台
+
+低延迟
+
+零依赖
+
+理由：符合"C 风格 C++、无第三方库"的工程哲学。
+
+5.5 坐标系统
+训练器：局部平面坐标
+Terra：ECEF 球体坐标
+
+两者通过接口切换，核心层不假设坐标类型。训练器不知道 ECEF 存在。
+
+5.6 WorldState
+训练器：不使用 WorldState，直接操作游戏对象
+Terra：使用 WorldState
+
+WorldState 是可选层，不是强制中介。训练器不知道 WorldState 存在。
+
+6. 工程哲学
+6.1 代码风格
+C++ 但 C 风格
+
+禁用异常、RTTI
+
+函数名：PascalCase
+
+成员变量：snake_case_（尾部下划线）
+
+常量：kConstantName
+
+宏：NYX_MACRO_NAME
+
+6.2 内存管理
+核心系统默认预分配
+
+热路径零分配
+
+使用 Memory 封装（Debug 可追踪）
+
+不用 new / delete，用 NYX_NEW / NYX_DELETE
+
+6.3 错误处理
+不使用异常
+
+使用返回码或 assert（Debug）
+
+不可恢复错误 → LOG_FATAL + abort()
+
+可恢复错误 → 日志 + 返回 false
+
+6.4 日志
+统一用 Logger
+
+不用 std::cout / std::cerr（除启动阶段）
+
+6.5 命名空间
+核心层使用 nyx::
+
+应用层不加命名空间（或使用独立命名空间）
+
+7. 开发路线图
+阶段 A：引擎基础设施（当前）
+批次 1：基础层
+
+Logger
+
+Memory
+
+Math
+
+FileSystem
+
+Platform
+
+批次 2：工具层
+
+Serialization
+
+Event
+
+JobSystem
+
+批次 3：核心系统
+
+Resource
+
+Audio
+
+Profiler
+
+MemoryProfiler
+
+CrashHandler
+
+批次 4：产品化
+
+Packaging
+
+ConfigPersistence
+
+Reflection
+
+每批次完成后，训练器接入新系统验证。
+
+阶段 B：训练器完善
+PrismSpectra（视觉身份）
+
+训练器游戏逻辑（瞄准、计分、模式）
+
+打包发布
+
+阶段 C：Terra 技术预研
+ECEF 坐标系统验证
+
+瓦片格式设计
+
+流式加载原型
+
+球面大气散射原型
+
+阶段 D：Terra 第一章
+全球 1km 地形
+
+自由相机
+
+球面大气
+
+基础水面
+
+阶段 E：Terra 完整版
+WorldState
+
+载具系统
+
+气象系统
+
+经济系统
+
+网络（未来）
+
+8. 训练器定位（附录）
+8.1 核心目标
+指标	目标
+输入延迟	≤ 5ms
+帧率	1000+ FPS
+帧时间 P99	≤ 1.3ms
+包体	≤ 50 MB
+启动时间	≤ 1 秒
+8.2 核心功能
+第一人称瞄准训练
+
+多种目标移动模式
+
+材质预设切换
+
+性能统计
+
+编辑器（F1）
+
+8.3 视觉风格
+镜之边缘 + CS2 之间，偏 CS2
+
+干净、克制、目标清晰
+
+硬阴影、程序化天空
+
+9. Terra 定位（附录）
+9.1 一句话定义
+一个在真实球体地球上的、第一人称步行优先的、高自由度、体验为主的巨型 RPG。地球本身就是内容。
+
+9.2 核心特征
+特征	说明
+球体地球	完整球体模型，无地图边界
+地球尺度	真实地形数据，全球可探索
+步行优先	第一人称跑酷 + 射击
+自洽模拟	全球气象、洋流、昼夜、季节
+体验为主	非沙盒，地形不可修改
+完全 PvP	玩家可自由攻击，规则由服务器配置
+多人预留	单机优先，架构为几百人准备
+9.3 技术基础
+ECEF 坐标系统
+
+Cube Sphere 瓦片
+
+球面大气散射
+
+简化气象模拟（1°×1° 网格）
+
+WorldState 架构
+
+流式加载
+
+9.4 视觉风格
+介于镜之边缘与 CS2 之间，偏镜之边缘
+
+PrismSpectra 材质（水面、玻璃、金属）
+
+程序化天空（非贴图、非建模）
+
+多层云、极光、降水、闪电
+
+10. 视觉规范（附录）
+10.1 主色板
 颜色	色值	用途
-黑	#0D0E11	编辑器背景、训练场景暗部
+黑	#0D0E11	编辑器背景、暗部
 天蓝	#4FC3F7	准星、目标、按钮高亮
 纯白	#F5F7FA	文字、关键强调
 参考：CS 火神 AK 的冷黑 + 亮蓝 + 白刻线风格。
 
-9. 旗舰技术：PrismSpectra
-PrismSpectra 是 Nyx 的材质光学质感系统，包含菲涅尔、干净反射、清晰折射、色散与克制的粉蓝泛光。
-适用于玻璃、珠光、金属、油墨等材质，是 Nyx 视觉语言的核心技术之一。
+10.2 PrismSpectra
+定位：Nyx 的材质光学质感系统。
 
-技术组件
+技术组件：
+
 菲涅尔：正面弱反射，斜角强反射
 
 干净反射：反射天空和纯色几何体，不模糊
 
 清晰折射：透过玻璃的目标依然锐利，仅轻微偏移
 
-色散：高光边缘出现极淡的蓝紫粉偏移
+色散：高光边缘极淡的蓝紫粉偏移
 
 微泛光：高光周围极克制的辉光
 
-设计哲学
+设计哲学：
+
 克制：粉蓝泛光只在高光边缘出现，且非常轻微
 
 真实之上：物理正确，但更强调干净的视觉体验
 
 可复用：同一套光学规则应用于玻璃、珠光、金属、油墨
 
-10. 路线图
-短期（架构重构）
-引擎实例抽象
+实现路径：
 
-输入系统独立
+底层：标准 PBR（albedo, metallic, roughness, normal）
 
-光照系统抽象
+上层：PrismSpectra（fresnelStrength, dispersion, bloomTint）
 
-编辑器面板分离
+两者正交：可以只用 PBR，也可以叠加 PrismSpectra
 
-中期（氛围与配置）
-闪电事件系统
+11. 开发日志
+已完成
+日期	内容
+2026-09-07	引擎雏形，Vulkan 渲染，球体射击，ImGui 编辑器
+2026-09-08	显示设置、MSAA、光照、阴影、天空、目标移动
+2026-09-10	项目结构重构，引擎/游戏/编辑器分层，摄像机反转修复
+2026-09-12	阶段 0：删 vkDeviceWaitIdle、修 materialIndex、去 cout、Camera 解耦
+2026-09-12	阶段 1：多帧并行、acquire/present 检查、命令缓冲生命周期、独占全屏重建
+2026-09-12	阶段 2：timeOfDay 坐标系统一、天空关键帧、世界坐标、viewDir 修正、环境光接入天空、push constant 重组
+2026-09-12	阶段 3：EngineConfig、NyxEngine、InputSystem、LightingSystem、EditorPanel 拆分
+计划中
+时间	内容
+批次 1	Logger、Memory、Math、FileSystem、Platform
+批次 2	Serialization、Event、JobSystem
+批次 3	Resource、Audio、Profiler、MemoryProfiler、CrashHandler
+批次 4	Packaging、ConfigPersistence、Reflection
+之后	训练器完善 → 发布 → Terra 技术预研 → Terra 第一章
+12. 一句话总结
+Nyx 是一个模块化专用引擎，为训练器和 Terra 两个平行应用服务。它一次把引擎基础设施建完，之后游戏开发不改引擎。它克制、干净、专用，为极致优化而生。
 
-配置保存加载
-
-PNG 准星
-
-长期（视觉与物理）
-PrismSpectra 基础实现
-
-轻物理碎片
-
-完整天气系统
-
-音频系统
-
-11. 工程哲学
-C++ 但 C 风格
-
-禁用异常、RTTI
-
-配置驱动
-
-专用而非通用
-
-克制：不做关节、布料、流体、车辆物理
-
-12. 开发日志
-2026.09.07：引擎雏形完成，Vulkan 渲染，球体射击，ImGui 编辑器
-
-2026.09.08：显示设置、MSAA、光照、阴影、天空、目标移动
-
-2026.09.10：项目结构重构，引擎游戏编辑器分层，摄像机反转修复
-
-下一步：引擎实例抽象 + 输入系统独立
-
-文档版本：0.6.0
-最后更新：2026年9月10日
-状态：进入架构重构阶段，为后续功能奠定基础
+文档状态： 概念确定，进入引擎基础设施一次建完阶段
+最后更新： 2026-09-12
+下一步： 从 Logger 开始，批次 1 启动
