@@ -7,6 +7,7 @@
 #include "Render/LightingSystem.h"
 #include "Scene/Camera.h"
 #include "Audio/AudioClock.h"
+#include "World/WorldState.h"
 #include <SDL.h>
 
 // ============ NyxEngine 实例 ============
@@ -18,8 +19,6 @@
 //   Initialize(window, settings) -> 创建并初始化所有子系统
 //   主循环: BeginFrame(dt) -> [game update] -> [render] -> EndFrame()
 //   Shutdown() -> 逆序销毁
-//
-// BeginFrame 接收 dt，用它推进引擎内部的时钟类子系统（AudioClock）。
 
 class NyxEngine {
 public:
@@ -38,6 +37,7 @@ public:
     LightingSystem& GetLighting()       { return lighting_; }
     Camera& GetCamera()                 { return camera_; }
     AudioClock& GetAudioClock()         { return audioClock_; }
+    WorldState& GetWorldState()         { return world_; }
 
 private:
     EngineConfig config_;
@@ -48,4 +48,5 @@ private:
     LightingSystem lighting_;
     Camera camera_;
     AudioClock audioClock_;
+    WorldState world_;
 };

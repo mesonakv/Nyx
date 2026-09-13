@@ -8,7 +8,6 @@
 #include "NyxEngine/Core/FrameTimeHistory.h"
 #include "NyxEngine/Core/VulkanContext.h"
 #include "Game/Target/TargetManager.h"
-#include "Game/Player.h"
 
 class NyxEngine;
 
@@ -17,7 +16,7 @@ class NyxEngine;
 // 游戏逻辑的容器。
 //
 // 职责：
-//   - 持有游戏对象（Player、Materials、Targets、Editor）
+//   - 持有游戏对象（Materials、Targets、Editor）
 //   - 持有游戏状态（editorMode、running、窗口状态）
 //   - 驱动主循环（Run 内部有 while）
 //   - 处理 SDL 事件、显示设置变更、标题更新
@@ -26,6 +25,7 @@ class NyxEngine;
 //   - 引擎初始化（NyxEngine 负责）
 //   - 渲染管线（Renderer 负责）
 //   - 光照计算（LightingSystem 负责）
+//   - 玩家数据（WorldState 负责，通过 engine.GetWorldState() 访问）
 
 class MyGame {
 public:
@@ -44,7 +44,7 @@ private:
     SDL_Window* window_ = nullptr;
 
     // ---------- 游戏对象 ----------
-    Player player_;
+    // 注意：Player 现在归 WorldState（engine 持有），不在这里
     MaterialLibrary materials_;
     TargetManager targets_;
     EditorPanel editor_;

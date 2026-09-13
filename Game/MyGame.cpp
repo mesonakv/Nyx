@@ -42,11 +42,6 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     performanceFrequency_ = SDL_GetPerformanceFrequency();
     lastFrameCounter_ = SDL_GetPerformanceCounter();
 
-    // 玩家
-    const EngineConfig& config = engine.GetConfig();
-    player_.position = config.player.initialPosition;
-    player_.eyeHeight = config.player.eyeHeight;
-
     // 材质
     materials_.LoadDefaults();
 
@@ -79,8 +74,6 @@ void MyGame::Shutdown() {
 
 // ============ 主循环 ============
 
-// ============ 主循环 ============
-
 void MyGame::Run() {
     while (running_) {
         uint64_t frameStartCounter = SDL_GetPerformanceCounter();
@@ -90,7 +83,7 @@ void MyGame::Run() {
         lastFrameCounter_ = currentFrameCounter;
         if (dt > 0.1f) dt = 0.1f;
 
-        engine_->BeginFrame(dt);   // ← 传 dt
+        engine_->BeginFrame(dt);
 
         // ---------- 事件 ----------
         SDL_Event event;
@@ -161,6 +154,7 @@ void MyGame::ProcessEvent(const SDL_Event& e) {
 void MyGame::Update(float dt) {
     InputSystem& input = engine_->GetInput();
     Camera& camera = engine_->GetCamera();
+    Player& player = engine_->GetWorldState().player;
 
     // ---------- 输入业务逻辑 ----------
     if (input.ShouldQuit()) running_ = false;
@@ -191,15 +185,14 @@ void MyGame::Update(float dt) {
     }
 
     // ---------- 玩家更新 ----------
-    player_.Update(dt);
+    player.Update(dt);
 
     // ---------- 游戏逻辑 ----------
     uint32_t currentTime = SDL_GetTicks();
 
     if (!editorMode_) {
         if (input.IsKeyDown(SDL_SCANCODE_SPACE) && currentTime - lastShotTime_ > 200) {
-            glm::vec3 eyePos = player_.GetEyePosition();
-            targets_.Shoot(eyePos, camera.GetDirection());
+            targets_.Shoot(player.GetEyePosition(), camera.GetDirection());
             lastShotTime_ = currentTime;
         }
         if (input.IsKeyDown(SDL_SCANCODE_R)) {
@@ -314,13 +307,14 @@ void MyGame::Render() {
     // ---------- 帧数据 ----------
     VulkanContext& vk = engine_->GetVulkanContext();
     Camera& camera = engine_->GetCamera();
+    Player& player = engine_->GetWorldState().player;
     float aspect = (float)vk.swapchainExtent.width / (float)vk.swapchainExtent.height;
 
     const auto& alivePositions = targets_.GetAlivePositions();
     const auto& aliveScales = targets_.GetAliveScales();
     const auto& aliveMaterialIndices = targets_.GetAliveMaterialIndices();
 
-    glm::vec3 eyePos = player_.GetEyePosition();
+    glm::vec3 eyePos = player.GetEyePosition();
 
     FrameData frameData;
     frameData.view = camera.GetViewMatrix(eyePos);
