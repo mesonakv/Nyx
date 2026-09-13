@@ -14,16 +14,77 @@ find_package(Vulkan REQUIRED)
 set(SDL2_DIR "D:/Dev/NyxEngine/ThirdParty/SDL2/SDL2-2.32.10/cmake")
 find_package(SDL2 REQUIRED)
 
-# 源文件
-file(GLOB_RECURSE NYX_ENGINE_SOURCES
-    "NyxEngine/*.cpp"
-    "Game/*.cpp"
-    "main.cpp"
+# ============================================================
+# 引擎源文件
+# ============================================================
+# 显式列表。新增 .cpp 时手动加到这里。
+#
+# 为什么不使用 file(GLOB_RECURSE)：
+#   - 误建的文件会被自动编译，导致链接期才发现重定义
+#   - 无法控制哪些文件属于哪个 target
+#   - 加文件时缺少"这一步是有意识决定"的仪式感
+#
+# 分层顺序：入口 → Audio → Core → Editor → Render → Resource → Scene → World
+
+set(NYX_ENGINE_SOURCES
+    # 引擎入口
+    NyxEngine/NyxEngine.cpp
+
+    # Audio
+    NyxEngine/Audio/AudioClock.cpp
+
+    # Core
+    NyxEngine/Core/EventBus.cpp
+    NyxEngine/Core/FileSystem.cpp
+    NyxEngine/Core/ImGuiManager.cpp
+    NyxEngine/Core/InputSystem.cpp
+    NyxEngine/Core/JobSystem.cpp
+    NyxEngine/Core/JsonValue.cpp
+    NyxEngine/Core/Logger.cpp
+    NyxEngine/Core/Memory.cpp
+    NyxEngine/Core/Platform.cpp
+    NyxEngine/Core/VulkanContext.cpp
+
+    # Editor
+    NyxEngine/Editor/CameraPanel.cpp
+    NyxEngine/Editor/DisplaySettingsPanel.cpp
+    NyxEngine/Editor/EditorPanel.cpp
+    NyxEngine/Editor/LightingPanel.cpp
+    NyxEngine/Editor/MaterialPanel.cpp
+    NyxEngine/Editor/PerformancePanel.cpp
+    NyxEngine/Editor/TargetMovementPanel.cpp
+
+    # Render
+    NyxEngine/Render/LightingSystem.cpp
+    NyxEngine/Render/Renderer.cpp
+
+    # Resource
+    NyxEngine/Resource/MeshLoader.cpp
+    NyxEngine/Resource/ResourceManager.cpp
+
+    # Scene
+    NyxEngine/Scene/Camera.cpp
+    NyxEngine/Scene/Material.cpp
+
+    # World
+    NyxEngine/World/Player.cpp
 )
 
+# ============================================================
+# 游戏源文件
+# ============================================================
+
+set(NYX_GAME_SOURCES
+    Game/MyGame.cpp
+    Game/Target/TargetManager.cpp
+)
+
+# ============================================================
 # ImGui 源文件
+# ============================================================
+
 set(IMGUI_DIR "D:/Dev/NyxEngine/ThirdParty/imgui")
-list(APPEND NYX_ENGINE_SOURCES
+set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
@@ -32,7 +93,16 @@ list(APPEND NYX_ENGINE_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
 )
 
-add_executable(NyxEngine ${NYX_ENGINE_SOURCES})
+# ============================================================
+# 可执行文件
+# ============================================================
+
+add_executable(NyxEngine
+    main.cpp
+    ${NYX_ENGINE_SOURCES}
+    ${NYX_GAME_SOURCES}
+    ${IMGUI_SOURCES}
+)
 
 # 链接库
 target_link_libraries(NyxEngine PRIVATE Vulkan::Vulkan SDL2::SDL2main SDL2::SDL2)
@@ -44,6 +114,9 @@ target_include_directories(NyxEngine PRIVATE
     NyxEngine/Core
     NyxEngine/Render
     NyxEngine/Scene
+    NyxEngine/Audio
+    NyxEngine/World
+    NyxEngine/Input
     Game
     ThirdParty/glm/glm
     ThirdParty/imgui

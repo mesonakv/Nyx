@@ -132,7 +132,6 @@ void RunJobSystemTest() {
 }
 
 void RunResourceTest() {
-    // 内嵌一个简单的立方体 obj
     static const char* kCubeObj =
         "# Simple cube\n"
         "v -0.5 -0.5  0.5  1 0 0\n"
@@ -174,7 +173,6 @@ void RunResourceTest() {
     NYX_LOG_INFO("Resource test: %zu vertices, %zu indices, %zu triangles",
                  data.GetVertexCount(), data.GetIndexCount(), data.GetTriangleCount());
 
-    // 测试错误案例
     std::string err;
     MeshData badData;
     if (!MeshLoader::LoadObjFromString("f 1 2 3\n", badData, &err)) {
@@ -193,9 +191,11 @@ void RunSelfTests() {
 
 int main(int argc, char* argv[]) {
     // ============ 平台初始化 ============
+    // 所有 SDL hint 必须在 SDL_Init 之前设置。
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-    SDL_Init(SDL_INIT_VIDEO);
     SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+
+    SDL_Init(SDL_INIT_VIDEO);
 
     // ============ 引擎基础设施初始化 ============
     LoggerConfig logConfig;
@@ -216,7 +216,7 @@ int main(int argc, char* argv[]) {
     NYX_LOG_INFO("Executable dir: %s", FileSystem::GetExecutableDir().c_str());
     NYX_LOG_INFO("Working dir:    %s", FileSystem::GetWorkingDir().c_str());
 
-    // ============ 引擎自测 ============
+    // ============ 引擎自测（仅 Debug）============
 #ifdef _DEBUG
     RunSelfTests();
 #endif

@@ -5,6 +5,7 @@
 
 #include "NyxEngine/NyxEngine.h"
 #include "NyxEngine/Core/Logger.h"
+#include "NyxEngine/Core/Platform.h"
 #include "NyxEngine/Core/InputSystem.h"
 #include "NyxEngine/Core/ImGuiManager.h"
 #include "NyxEngine/Render/Renderer.h"
@@ -163,6 +164,17 @@ void MyGame::Update(float dt) {
         editorMode_ = !editorMode_;
         input.SetMouseCaptured(!editorMode_);
     }
+
+    // ---------- 临时测试：InputEventHistory ----------
+    if (input.WasKeyPressed(SDL_SCANCODE_Q)) {
+        const auto& hist = input.GetEventHistory();
+        uint64_t lastQ = input.GetLastKeyPressTime(SDL_SCANCODE_Q);
+        uint64_t now = Platform::GetTimerNanos();
+        NYX_LOG_INFO("History: %zu events | last Q age: %.2f ms",
+                     hist.Size(),
+                     lastQ ? (double)(now - lastQ) / 1.0e6 : -1.0);
+    }
+    // ---------- 临时测试结束 ----------
 
     if (!editorMode_) {
         camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());

@@ -242,10 +242,13 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     if (settings.vsync) {
         chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
     } else {
-        if (hasPresentMode(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
-            chosenPresentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-        } else if (hasPresentMode(VK_PRESENT_MODE_MAILBOX_KHR)) {
+        // 优先 MAILBOX：无撕裂、延迟接近 IMMEDIATE
+        // 退化到 IMMEDIATE：有撕裂，但延迟最低
+        // 再退化到 FIFO：最后保底
+        if (hasPresentMode(VK_PRESENT_MODE_MAILBOX_KHR)) {
             chosenPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        } else if (hasPresentMode(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
+            chosenPresentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
         } else {
             chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
         }

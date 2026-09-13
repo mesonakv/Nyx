@@ -1,6 +1,6 @@
 #pragma once
 #include <SDL.h>
-#include <cstdint>
+#include "../Input/InputEventHistory.h"
 
 // ============ InputSystem ============
 //
@@ -16,11 +16,16 @@
 //   - keysPressedThisFrame_ / keysReleasedThisFrame_ 记录本帧的瞬时事件
 //   - 即便玩家在两次 PollEvent 之间完成按下+释放，这两个表也能正确记录
 //
+// 事件历史：
+//   - 所有输入事件写入 InputEventHistory，保留最近 250ms
+//   - 用于输入缓冲、连招窗口、精确判定
+//   - 阶段 2（Raw Input）和阶段 3（独立输入线程）会用到
+//
 // 未来扩展：
 //   - 手柄输入
 //   - 灵敏度曲线
-//   - 按键映射
-//   - 输入时间戳（用于动作缓冲、音频对齐）
+//   - 按键映射（InputMap，独立模块）
+//   - Raw Input（阶段 2）
 
 class InputSystem {
 public:
@@ -28,7 +33,7 @@ public:
     void Shutdown();
 
     // 每帧调用
-    void BeginFrame();                        // 清空本帧临时状态（鼠标 delta、pressed/released 表）
+    void BeginFrame();                        // 清空本帧临时状态、清理过期历史
     void ProcessEvent(const SDL_Event& e);    // 处理单个 SDL 事件
     void EndFrame();                          // 保留接口，当前为空
 
@@ -47,15 +52,25 @@ public:
     // ---------- 退出 ----------
     bool ShouldQuit() const { return quitRequested_; }
 
+    // ---------- 事件历史 ----------
+    const InputEventHistory& GetEventHistory() const { return history_; }
+
+    // 返回指定按键最近一次按下的时间戳（纳秒），0 表示历史里没有
+    uint64_t GetLastKeyPressTime(SDL_Scancode key) const;
+    uint64_t GetLastKeyReleaseTime(SDL_Scancode key) const;
+
+    // 返回指定按键在 sinceTimestamp 之后是否被按下过
+    bool WasKeyPressedSince(SDL_Scancode key, uint64_t sinceTimestamp) const;
+
 private:
     static constexpr int kMaxKeys = SDL_NUM_SCANCODES;
 
     SDL_Window* window_ = nullptr;
 
     // 键盘状态
-    bool keysDown_[kMaxKeys] = {};              // 持续按住
-    bool keysPressedThisFrame_[kMaxKeys] = {};  // 本帧刚按下
-    bool keysReleasedThisFrame_[kMaxKeys] = {}; // 本帧刚释放
+    bool keysDown_[kMaxKeys] = {};
+    bool keysPressedThisFrame_[kMaxKeys] = {};
+    bool keysReleasedThisFrame_[kMaxKeys] = {};
 
     // 鼠标
     float mouseDeltaX_ = 0.0f;
@@ -64,4 +79,7 @@ private:
 
     // 退出
     bool quitRequested_ = false;
+
+    // 事件历史（环形缓冲）
+    InputEventHistory history_;
 };
