@@ -64,6 +64,7 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     ctx.displayModes = &displayModes_;
     ctx.frameTimes = &frameTimes_;
     ctx.pendingDisplayChange = &pendingDisplayChange_;
+    ctx.input = &engine.GetInput();
     editor_.Initialize(ctx);
 
     NYX_LOG_INFO("MyGame initialized");

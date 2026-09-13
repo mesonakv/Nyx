@@ -1,4 +1,5 @@
 #include "EditorPanel.h"
+#include "../Core/InputSystem.h"
 #include <imgui.h>
 
 void EditorPanel::Initialize(const Context& ctx) {
@@ -10,6 +11,7 @@ void EditorPanel::Initialize(const Context& ctx) {
     }
     if (ctx.config) lightingPanel_.Initialize(*ctx.config);
     if (ctx.frameTimes) performancePanel_.Initialize(*ctx.frameTimes);
+    if (ctx.input) inputPanel_.Initialize(*ctx.input);
 }
 
 void EditorPanel::Draw() {
@@ -20,5 +22,6 @@ void EditorPanel::Draw() {
     displayPanel_.Draw();
     lightingPanel_.Draw();
     performancePanel_.Draw();
+    inputPanel_.Draw();
     ImGui::End();
 }

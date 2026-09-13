@@ -4,6 +4,16 @@
 #include <atomic>
 #include <chrono>
 
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <Windows.h>
+    #include <imm.h>
+    #pragma comment(lib, "imm32.lib")
+    // Windows.h 会定义 min/max 宏，干扰 C++ 标准库
+    #undef min
+    #undef max
+#endif
+
 #include "NyxEngine/NyxEngine.h"
 #include "NyxEngine/Core/Logger.h"
 #include "NyxEngine/Core/Memory.h"
@@ -190,6 +200,19 @@ void RunSelfTests() {
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // ============ 禁用 IME（必须在任何窗口创建之前）============
+    // 中文输入法会截获键盘消息，导致游戏按键失效（F1、ESC、空格等）。
+    //
+    // 用线程级禁用，不碰窗口。窗口级 ImmAssociateContext 会破坏
+    // SDL 的 IME 状态同步，反而让所有键都失效。
+    //
+    // -1 表示当前线程（即 main 所在的主线程）。
+    //
+    // 未来做聊天框/改名框时，需要在进入文本框前临时恢复 IME。
+    ImmDisableIME(-1);
+#endif
+
     // ============ 平台初始化 ============
     // 所有 SDL hint 必须在 SDL_Init 之前设置。
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");

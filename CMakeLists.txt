@@ -33,6 +33,9 @@ set(NYX_ENGINE_SOURCES
     # Audio
     NyxEngine/Audio/AudioClock.cpp
 
+    # Input
+    NyxEngine/Input/Win32InputBackend.cpp
+
     # Core
     NyxEngine/Core/EventBus.cpp
     NyxEngine/Core/FileSystem.cpp
@@ -49,6 +52,7 @@ set(NYX_ENGINE_SOURCES
     NyxEngine/Editor/CameraPanel.cpp
     NyxEngine/Editor/DisplaySettingsPanel.cpp
     NyxEngine/Editor/EditorPanel.cpp
+    NyxEngine/Editor/InputPanel.cpp          # ← 新增
     NyxEngine/Editor/LightingPanel.cpp
     NyxEngine/Editor/MaterialPanel.cpp
     NyxEngine/Editor/PerformancePanel.cpp
