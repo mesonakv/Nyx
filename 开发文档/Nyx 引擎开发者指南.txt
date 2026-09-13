@@ -1,0 +1,663 @@
+# Nyx 引擎开发者指南
+
+版本 0.3.0
+最后更新：2026-09-14
+
+---
+
+## 一、环境搭建
+
+### 1.1 必需工具
+
+| 工具 | 版本 | 说明 |
+|------|------|------|
+| Visual Studio | 2022 或更高 | 需要"使用 C++ 的桌面开发"工作负载 |
+| CMake | **3.20+**（推荐 4.0+） | 命令行 `cmake --version` 能输出版本 |
+| Vulkan SDK | 1.4+ | 提供 glslc 编译 shader |
+| Git | 任意 | 版本控制 |
+
+### 1.2 验证环境
+
+```powershell
+cmake --version
+glslc --version
+$env:VULKAN_SDK
+如果 glslc 找不到，把 %VULKAN_SDK%\Bin 加到系统 PATH。
+
+1.3 项目路径
+本文档假设项目在 D:\Dev\NyxEngine。若不同，替换所有路径。
+
+二、编译流程
+2.1 配置
+powershell
+cd D:\Dev\NyxEngine
+cmake -S . -B build
+只在以下情况需要重跑：
+
+修改了 CMakeLists.txt
+
+新增或删除了 .cpp 文件
+
+首次配置
+
+2.2 编译
+powershell
+cmake --build build --config Release
+2.3 编译 shader
+powershell
+cd D:\Dev\NyxEngine\Shaders
+Get-ChildItem *.vert | ForEach-Object { glslc $_.FullName -o "$($_.FullName).spv" }
+Get-ChildItem *.frag | ForEach-Object { glslc $_.FullName -o "$($_.FullName).spv" }
+cd ..
+或只编译改过的：
+
+powershell
+glslc ball.frag -o ball.frag.spv
+2.4 运行
+powershell
+.\build\Release\NyxEngine.exe
+工作目录必须是 D:\Dev\NyxEngine，因为程序用的是相对路径 Shaders/xxx.spv。
+
+三、项目结构
+text
+NyxEngine/
+├── CMakeLists.txt
+├── main.cpp
+├── Game/                     游戏逻辑
+│   ├── MyGame.h/.cpp
+│   └── Target/
+├── NyxEngine/                引擎核心
+│   ├── NyxEngine.h/.cpp      引擎主类
+│   ├── Audio/
+│   │   └── AudioClock
+│   ├── Core/                 基础设施
+│   │   ├── EngineConfig.h
+│   │   ├── EventBus
+│   │   ├── FileSystem
+│   │   ├── ImGuiManager
+│   │   ├── InputSystem
+│   │   ├── JobSystem
+│   │   ├── JsonValue
+│   │   ├── Logger
+│   │   ├── Memory
+│   │   ├── NyxMath
+│   │   ├── Platform
+│   │   └── VulkanContext
+│   ├── Editor/               编辑器面板
+│   │   ├── CameraPanel
+│   │   ├── DisplaySettingsPanel
+│   │   ├── EditorPanel
+│   │   ├── InputPanel
+│   │   ├── LightingPanel
+│   │   ├── MaterialPanel
+│   │   ├── PerformancePanel
+│   │   └── TargetMovementPanel
+│   ├── Input/                输入事件与后端
+│   │   ├── IInputBackend.h
+│   │   ├── InputEvent.h
+│   │   ├── InputEventHistory.h
+│   │   └── Win32InputBackend
+│   ├── Physics/              物理基础设施
+│   │   ├── PhysicsTypes.h
+│   │   ├── PhysicsWorld.h/.cpp
+│   │   ├── Broadphase/
+│   │   ├── Narrowphase/
+│   │   └── Shapes/
+│   ├── Render/
+│   │   ├── DebugDraw
+│   │   ├── FrameData.h
+│   │   ├── LightingSystem
+│   │   └── Renderer
+│   ├── Resource/
+│   │   ├── Mesh
+│   │   ├── MeshData.h
+│   │   ├── MeshLoader
+│   │   └── ResourceManager
+│   ├── Scene/
+│   │   ├── Camera
+│   │   └── Material
+│   └── World/
+│       ├── Player
+│       └── WorldState
+├── Shaders/
+│   ├── ball.vert/.frag
+│   ├── debug_line.vert/.frag
+│   └── sky.vert/.frag
+├── ThirdParty/               glm / imgui / SDL2
+└── 开发文档/                 设计文档
+四、三层架构
+text
+main.cpp                 ← 启动器
+  ↓
+MyGame                   ← 游戏逻辑（持有游戏对象，驱动主循环）
+  ↓
+NyxEngine                ← 引擎实例（持有所有子系统）
+  ↓
+[Core / Render / Scene / Editor / Resource / Physics / Input / Audio / World]
+  ↓
+[SDL2 / Vulkan / ImGui / glm]
+数据流
+text
+Input → GameLogic → WorldState → Renderer
+Input：InputSystem 采集原始事件
+
+GameLogic：MyGame 读写 WorldState
+
+WorldState：唯一的逻辑状态源
+
+Renderer：只读 WorldState，通过 FrameData 接收
+
+每帧流程
+text
+NyxEngine::BeginFrame(dt)
+  ├── InputSystem::BeginFrame()         清空瞬时状态、裁剪事件历史
+  └── AudioClock::Tick(dt)
+
+while (SDL_PollEvent)
+  ├── InputSystem::ProcessEvent()       采集输入
+  ├── MyGame::ProcessEvent()            窗口事件
+  └── ImGui_ImplSDL2_ProcessEvent()
+
+MyGame::Update(dt)
+  ├── 输入业务逻辑（F1、ESC）
+  ├── 相机更新
+  ├── 显示设置变更
+  ├── 玩家更新（移动、跳跃、物理）
+  └── 游戏逻辑更新
+
+MyGame::Render()
+  ├── LightingSystem::Update()
+  ├── ImGuiManager::NewFrame() + EditorPanel::Draw()
+  ├── DebugDraw：绘制物理/调试信息
+  └── Renderer::DrawFrame(FrameData)
+
+NyxEngine::EndFrame()
+  └── InputSystem::EndFrame()
+五、代码规范
+5.1 命名
+类型	规则	示例
+类名	PascalCase	VulkanContext, MeshLoader
+函数名	PascalCase	Initialize, DrawFrame
+成员变量	snake_case + 尾下划线	currentFrame_, device_
+局部变量	snake_case	frame_data, total_count
+常量	k + PascalCase	kMaxDepth, kInvalidHandle
+宏	NYX_ + 大写	NYX_LOG_INFO, NYX_NEW
+命名空间	小写	nyx
+5.2 格式
+4 空格缩进（不用 tab）
+
+大括号跟在同一行（K&R 风格）
+
+一行不超过 120 字符
+
+指针/引用符号贴着类型：Foo* ptr, const Foo& ref
+
+cpp
+void Foo::Bar() {
+    if (condition) {
+        DoSomething();
+    } else {
+        DoOther();
+    }
+}
+5.3 类设计
+数据成员默认 private
+
+需要暴露的接口放 public
+
+需要 public 数据成员时，注释说明原因
+
+禁用拷贝（除非类真的是值语义）：MyClass(const MyClass&) = delete;
+
+5.4 错误处理
+不使用异常。三种处理方式：
+
+cpp
+// 1. 不可恢复 → Fatal + abort
+NYX_LOG_FATAL("Cannot create device");
+
+// 2. 可恢复 → 返回 false / nullptr
+bool result = LoadFile(path);
+if (!result) return;
+
+// 3. 可恢复 + 需要细节 → 返回错误字符串
+std::string err;
+if (!LoadObj(path, mesh, &err)) {
+    NYX_LOG_ERROR("Failed: %s", err.c_str());
+}
+5.5 注释
+解释"为什么"，不解释"是什么"。
+
+cpp
+// ✅ 好
+// 用 memmove 而不是 ring buffer，因为 600 个 float 的滑动开销
+// 远小于维护环形的复杂度
+memmove(...);
+
+// ❌ 坏
+// 把 buffer[i] 赋值给 buffer[i-1]
+buffer[i] = buffer[i-1];
+六、各模块使用方式
+6.1 日志
+cpp
+#include "NyxEngine/Core/Logger.h"
+
+NYX_LOG_INFO("Player position: (%.2f, %.2f, %.2f)", x, y, z);
+NYX_LOG_WARN("Health low: %d", hp);
+NYX_LOG_ERROR("Failed to load: %s", path);
+不要用 std::cout。
+
+6.2 输入
+cpp
+InputSystem& input = engine.GetInput();
+
+// 键盘
+if (input.IsKeyDown(SDL_SCANCODE_W)) { ... }        // 按住
+if (input.WasKeyPressed(SDL_SCANCODE_SPACE)) { ... } // 本帧刚按下
+if (input.WasKeyReleased(SDL_SCANCODE_SPACE)) { ... }
+
+// 鼠标
+float dx = input.GetMouseDeltaX();
+float dy = input.GetMouseDeltaY();
+input.SetMouseCaptured(true);   // 捕获（游戏模式）
+
+// 事件历史（用于输入缓冲、精确判定）
+const auto& hist = input.GetEventHistory();
+uint64_t lastPress = input.GetLastKeyPressTime(SDL_SCANCODE_SPACE);
+bool pressedRecently = input.WasKeyPressedSince(SDL_SCANCODE_SPACE, cutoffTimestamp);
+
+// 后端切换
+input.SetUseRawInput(true);   // 切 Raw Input
+input.SetUseRawInput(false);  // 切 SDL
+6.3 物理
+cpp
+#include "NyxEngine/Physics/PhysicsWorld.h"
+#include "NyxEngine/Physics/Shapes/BoxShape.h"
+#include "NyxEngine/Physics/Shapes/SphereShape.h"
+#include "NyxEngine/Physics/Shapes/CapsuleShape.h"
+
+PhysicsWorld& physics = engine.GetWorldState().physics;
+
+// 创建形状
+CollisionFilter filter = CollisionFilter::Make(
+    PhysicsLayer::Player,
+    PhysicsLayer::StaticGeo | PhysicsLayer::Target);
+
+ShapeHandle handle = physics.CreateShape(
+    std::make_unique<CapsuleShape>(0.4f, 0.45f),
+    Transform{.position = {0, 1, 0}},
+    filter);
+
+// 更新位置
+physics.UpdateTransform(handle, Transform{.position = newPos});
+
+// 销毁
+physics.DestroyShape(handle);
+
+// 射线检测
+RaycastHit hit = physics.Raycast(
+    origin, direction, maxDistance,
+    PhysicsLayer::StaticGeo);   // queryMask（单向：查属于这些层的形状）
+if (hit.hit) {
+    // hit.point, hit.normal, hit.distance, hit.shape
+}
+
+// 扫掠（防穿墙）
+SweepHit sweep = physics.Sweep(
+    shape, startTransform, direction, maxDistance,
+    PhysicsLayer::StaticGeo);
+
+// 重叠检测
+std::vector<ShapeHandle> results;
+physics.Overlap(shape, transform, PhysicsLayer::Target, results);
+
+// 生成所有接触
+std::vector<Contact> contacts;
+physics.GenerateContacts(contacts);
+碰撞过滤说明：
+
+category：我属于哪些层
+
+mask：我愿意和哪些层碰撞
+
+CanCollideWith(other)：双向检查，用于碰撞对
+
+查询：单向，(entry.filter.category & queryMask) != 0
+
+6.4 Debug 绘制
+cpp
+#include "NyxEngine/Render/DebugDraw.h"
+
+DebugDraw& dbg = engine.GetRenderer().GetDebugDraw();
+dbg.Begin();   // 每帧开头
+
+// 基础
+dbg.Line(a, b, glm::vec3(1, 0, 0));
+
+// 盒体
+dbg.Box(aabb, color);
+dbg.Box(center, halfExtents, rotation, color);
+
+// 球体
+dbg.Sphere(center, radius, color);
+
+// 胶囊
+dbg.Capsule(p0, p1, radius, color);
+
+// 射线
+dbg.Ray(origin, direction, length, color);
+
+// 十字
+dbg.Cross(center, size, color);
+Renderer::DrawFrame 会自动上传并渲染。
+
+6.5 音频时钟
+cpp
+#include "NyxEngine/Audio/AudioClock.h"
+
+AudioClock& clock = engine.GetAudioClock();
+
+clock.SetDuration(180.0);   // 3 分钟
+clock.Start();
+clock.SetLoop(true, 0.0, 180.0);
+
+// 每帧（引擎自动 Tick）
+double t = clock.GetTimeSeconds();
+int64_t samples = clock.GetTimeSamples(48000);
+
+// 跳转、变速
+clock.Seek(60.0);
+clock.SetPlaybackRate(0.5);
+
+// 结束回调
+clock.SetEndCallback([]() { NYX_LOG_INFO("Ended"); });
+6.6 事件总线
+cpp
+#include "NyxEngine/Core/EventBus.h"
+
+struct PlayerDamagedEvent { int playerId; int amount; };
+
+// 订阅
+auto handle = EventBus::Subscribe<PlayerDamagedEvent>(
+    [](const PlayerDamagedEvent& e) {
+        NYX_LOG_INFO("Player %d took %d damage", e.playerId, e.amount);
+    });
+
+// 派发
+EventBus::Emit(PlayerDamagedEvent{1, 50});
+
+// 取消
+EventBus::Unsubscribe(handle);
+6.7 线程池
+cpp
+#include "NyxEngine/Core/JobSystem.h"
+
+JobSystem jobs;
+jobs.Initialize();
+jobs.Submit([]() { /* 后台线程 */ });
+jobs.WaitAll();
+jobs.Shutdown();
+6.8 配置
+cpp
+#include "NyxEngine/Core/EngineConfig.h"
+
+EngineConfig& config = engine.GetConfig();
+config.lighting.timeOfDay = 0.75f;
+config.camera.sensitivity = 0.002f;
+编辑器面板会自动读/写这些字段。
+
+七、常见任务
+7.1 加一个新的日志
+cpp
+#include "NyxEngine/Core/Logger.h"
+NYX_LOG_INFO("...");
+7.2 加一个配置项
+第 1 步：在 EngineConfig.h 对应结构体加字段
+
+cpp
+struct RenderConfig {
+    float shadowBias = 0.001f;
+};
+第 2 步：编辑器面板加 UI
+
+cpp
+ImGui::SliderFloat("Shadow Bias", &config_->render.shadowBias, 0.0f, 0.01f);
+7.3 加一个新 .cpp 文件
+放到正确的目录
+
+在 CMakeLists.txt 的显式列表里加一行
+
+重跑 cmake -S . -B build
+
+项目已从 GLOB_RECURSE 改为显式列表，避免误建文件被自动编译。
+
+7.4 加载一个 obj 模型
+cpp
+#include "NyxEngine/Resource/MeshLoader.h"
+
+MeshData mesh;
+std::string err;
+if (!MeshLoader::LoadObj("assets/model.obj", mesh, &err)) {
+    NYX_LOG_ERROR("Failed: %s", err.c_str());
+    return;
+}
+7.5 从 JSON 加载配置
+cpp
+std::string text = FileSystem::ReadText("config.json");
+std::string err;
+JsonValue root = JsonValue::Parse(text, &err);
+
+if (!err.empty()) {
+    NYX_LOG_ERROR("Parse error: %s", err.c_str());
+    return;
+}
+
+config.lighting.timeOfDay = root["lighting"]["timeOfDay"].AsFloat(0.5f);
+八、调试技巧
+8.1 日志分级
+Debug 构建下 NYX_LOG_TRACE / NYX_LOG_DEBUG 会输出，Release 下不输出。
+
+改 main.cpp：
+
+cpp
+LoggerConfig logConfig;
+logConfig.minLevel = LogLevel::Debug;   // 强制 Debug 级
+8.2 内存泄漏检测
+程序退出时打印 Memory Stats：
+
+text
+[INFO] Memory: 3 allocations still live at shutdown
+[INFO]   Leak: 256 bytes at Renderer.cpp:123 (tag=Render)
+根据文件:行号定位。
+
+8.3 Vulkan 验证层
+当前未启用。要查 Vulkan 错误，在 VulkanContext::Initialize 里加：
+
+cpp
+const char* validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
+createInfo.enabledLayerCount = 1;
+createInfo.ppEnabledLayerNames = validationLayers;
+8.4 性能测量
+编辑器 F1 → Performance 面板：
+
+Avg：平均帧时间
+
+P99：99% 分位帧时间
+
+Worst 1%
+
+StdDev：标准差
+
+好的数值：StdDev < 0.1ms，P99 < 1.5×Avg。
+
+8.5 Debug 绘制
+用 DebugDraw 可视化任何 3D 信息：
+
+cpp
+dbg.Begin();
+dbg.Ray(rayOrigin, rayDir, 10.0f, {1, 1, 0});
+dbg.Sphere(hitPoint, 0.1f, {1, 0, 0});
+8.6 输入调试
+编辑器 F1 → Input 面板：
+
+Total events：累计事件数（持续增长表示输入在采集）
+
+History（250ms）：当前窗口内事件数
+
+Active channel：Raw Input / SDL
+
+Mouse captured
+
+九、常见坑
+9.1 Windows.h 的宏
+Windows.h 定义了一堆会干扰普通标识符的宏：
+
+cpp
+#define CreateDirectory CreateDirectoryA
+#define min(a,b) (((a) < (b)) ? (a) : (b))
+解决：include 之后立即 #undef：
+
+cpp
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <Windows.h>
+    #undef min
+    #undef max
+#endif
+9.2 glm 需要 <cmath> 在前
+MSVC 下 glm 的 .inl 有 using std::round;。如果 <cmath> 没先 include，会报错。
+
+解决：include glm 之前先 include <cmath>，或直接 #include "NyxEngine/Core/NyxMath.h"。
+
+9.3 不要用 Math.h 作文件名
+Windows 大小写不敏感，你的 Math.h 会替换系统的 <math.h>。用 NyxMath.h。
+
+9.4 显式列表必须更新
+CMakeLists.txt 用的是显式源文件列表。新增 .cpp 后必须手动加进 CMakeLists.txt，否则链接错误。
+
+9.5 相对路径
+程序运行时，Shaders/xxx.spv 是相对于工作目录，不是可执行文件目录。
+
+解决：始终从项目根目录运行，或用 FileSystem::GetExecutableDir() 拼绝对路径。
+
+9.6 编码问题
+项目强制 UTF-8（/utf-8 编译选项）。如果文件是 GBK 编码，会报 C4828。
+
+解决：文件另存为 UTF-8。
+
+9.7 vkDeviceWaitIdle 不要放热路径
+会让 CPU 等 GPU 完全空闲，彻底消除并行。
+
+✅ 正确：swapchain 重建、资源销毁时用
+
+❌ 错误：每帧 DrawFrame 里用
+
+9.8 std::vector 返回引用时注意生命周期
+cpp
+// ❌ 错误
+const auto& pos1 = targets.GetAlivePositions();
+const auto& scale1 = targets.GetAliveScales();
+const auto& pos2 = targets.GetAlivePositions();  // pos1 已经变了！
+
+// ✅ 正确
+auto pos = targets.GetAlivePositions();  // 拷贝
+9.9 中文输入法吞键
+Windows 上中文输入法会截获键盘消息，导致游戏按键失效。
+
+已解决：main.cpp 里调用 ImmDisableIME(-1)（线程级，不碰窗口）。
+
+如果将来做聊天框：进入文本框前临时恢复 IME。
+
+9.10 Raw Input 在编辑器模式下失效
+编辑器模式下鼠标被释放，Raw Input 收不到消息。
+
+已解决：InputSystem 自动回退到 SDL 通道。IsRawInputActive() 判断。
+
+十、快速参考
+10.1 常用宏
+宏	用途
+NYX_LOG_TRACE/DEBUG/INFO/WARN/ERROR/FATAL	日志
+NYX_ALLOC(size, tag)	分配内存
+NYX_FREE(ptr)	释放
+NYX_NEW(T, tag)	new 对象
+NYX_DELETE(T, ptr)	delete 对象
+10.2 常用工具
+功能	用法
+文件读文本	FileSystem::ReadText(path)
+路径拼接	FileSystem::Join(a, b)
+可执行目录	FileSystem::GetExecutableDir()
+高精度计时	Platform::GetTimerNanos()
+睡眠	Platform::SleepMs(16)
+CPU 核心数	Platform::GetCPUCoreCount()
+解析 JSON	JsonValue::Parse(text, &err)
+10.3 每帧要做的
+cpp
+engine.BeginFrame(dt);
+
+while (SDL_PollEvent(&event)) {
+    engine.GetInput().ProcessEvent(event);
+    ImGui_ImplSDL2_ProcessEvent(&event);
+}
+
+// 更新
+InputSystem& input = engine.GetInput();
+Camera& camera = engine.GetCamera();
+Player& player = engine.GetWorldState().player;
+
+camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());
+// ... 玩家、游戏逻辑
+
+// 光照
+LightingData lighting = engine.GetLighting().Update();
+
+// 编辑器
+engine.GetImGuiManager().NewFrame();
+if (editorMode) editor.Draw();
+
+// Debug 绘制
+DebugDraw& dbg = engine.GetRenderer().GetDebugDraw();
+dbg.Begin();
+// ... 各种绘制
+
+// 渲染
+FrameData frame;
+// ... 填 frame
+engine.GetRenderer().DrawFrame(vk, frame);
+
+engine.EndFrame();
+十一、遇到问题时
+先看日志。引擎几乎所有操作都有日志。
+
+看 Memory Stats。有泄漏说明某处没释放。
+
+检查 Vulkan 返回值。关键调用已加检查。
+
+最小化问题。把代码删到只剩出错的部分。
+
+对比工作版本。git diff 看改了什么。
+
+十二、提交规范
+12.1 分支策略
+main：主分支，随时可编译可运行
+
+feature/xxx：新功能分支
+
+fix/xxx：bug 修复分支
+
+12.2 提交信息格式
+text
+<类型>: <简短描述>
+
+详细描述（可选）
+类型：feat / fix / refactor / perf / docs / test / chore
+
+12.3 提交前检查
+□ 编译通过（Release）
+□ 运行正常（画面、帧率、手感无退化）
+□ Memory Stats 是 0
+□ 没有调试代码残留（std::cout、printf、临时日志）
+□ 没有大文件（build/ 已在 .gitignore）
+十三、文档状态
+首版：2026-09-13
+本文档基于 2026-09-14 的代码状态。
+反馈：直接改这份文档或提 issue。

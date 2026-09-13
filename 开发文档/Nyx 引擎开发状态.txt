@@ -1,0 +1,248 @@
+# Nyx 引擎开发状态
+
+版本 0.3.0
+最后更新：2026-09-14
+当前阶段：Layer 2 角色控制器进行中
+
+---
+
+## 一、引擎定位
+
+Nyx 是一个**专用而非通用**的游戏引擎。它不追求跨平台、不追求生态、不追求被其他开发者使用。它只服务一个目标：**用最低的输入延迟、最好的音频质量、最极致的优化，做出 Noriko 和后续项目。**
+
+- **专用**：只为已知应用服务，不做无意义抽象
+- **模块化**：核心层 + 应用层，编译可选，互不拖累
+- **C++ 但 C 风格**：禁用异常、RTTI，无隐藏开销
+- **配置驱动**：一切可调参数集中在 EngineConfig
+- **低延迟优先**：输入延迟、音频延迟、帧时间稳定性是三条红线
+
+---
+
+## 二、模块总览
+
+### 2.1 已完成
+
+| 模块 | 路径 | 状态 |
+|------|------|------|
+| 日志 | `NyxEngine/Core/Logger` | ✅ |
+| 内存 | `NyxEngine/Core/Memory` | ✅ |
+| 平台抽象 | `NyxEngine/Core/Platform` | ✅ |
+| 文件系统 | `NyxEngine/Core/FileSystem` | ✅ |
+| JSON | `NyxEngine/Core/JsonValue` | ✅ |
+| 事件总线 | `NyxEngine/Core/EventBus` | ✅ |
+| 线程池 | `NyxEngine/Core/JobSystem` | ✅ |
+| 数学工具 | `NyxEngine/Core/NyxMath` | ✅ |
+| Vulkan 上下文 | `NyxEngine/Core/VulkanContext` | ✅ |
+| ImGui 集成 | `NyxEngine/Core/ImGuiManager` | ✅ |
+| 输入系统 | `NyxEngine/Core/InputSystem` | ✅ |
+| 输入事件历史 | `NyxEngine/Input/InputEventHistory` | ✅ |
+| Raw Input 后端 | `NyxEngine/Input/Win32InputBackend` | ✅ |
+| 渲染器 | `NyxEngine/Render/Renderer` | ✅ |
+| 光照系统 | `NyxEngine/Render/LightingSystem` | ✅ |
+| 调试绘制 | `NyxEngine/Render/DebugDraw` | ✅ |
+| 相机 | `NyxEngine/Scene/Camera` | ✅ |
+| 材质 | `NyxEngine/Scene/Material` | ✅ |
+| Mesh 加载 | `NyxEngine/Resource/MeshLoader` | ✅ |
+| 资源管理 | `NyxEngine/Resource/ResourceManager` | ✅ |
+| 音频时钟 | `NyxEngine/Audio/AudioClock` | ✅ |
+| 物理基础 | `NyxEngine/Physics/*` | ✅ |
+| 玩家实体 | `NyxEngine/World/Player` | ✅ 部分 |
+| 世界状态 | `NyxEngine/World/WorldState` | ✅ |
+| 编辑器 | `NyxEngine/Editor/*` | ✅ |
+| 游戏逻辑 | `Game/MyGame` | ✅ 原型 |
+
+### 2.2 进行中
+
+- **角色控制器（Layer 2）**：重力、跳跃、地面检测已完成；加速度曲线、水平碰撞、状态机、完整动作套件未完成
+- **物理世界集成**：PhysicsWorld 已挂到 WorldState，但只用于地面检测和玩家胶囊
+
+### 2.3 未开始
+
+- InputMap（Action 抽象层、JSON 键位绑定）
+- 玩家状态机（Idle/Run/Jump/Dash/Slide/WallRun）
+- 音频后端（WASAPI 独占模式）
+- 网络同步（NetworkSync）
+- 刚体动力学（Rigid Body Solver）
+- 琉光幻彩 PrismSpectra（材质光学系统）
+- 游戏内 UI 层
+- 谱面系统
+- 弹幕系统
+- 能量系统
+- 角色/武器系统
+
+---
+
+## 三、核心模块详解
+
+### 3.1 输入系统
+
+**目标**：Windows 上接近极限的输入延迟。
+
+**架构**：
+InputSystem
+├── SDL 通道（fallback + 编辑器模式）
+└── Raw Input 通道（Windows，游戏模式）
+└── Win32InputBackend (WM_INPUT)
+
+text
+
+**双通道切换规则**：
+- `useRawInput_ && mouseCaptured_` → Raw Input
+- 否则 → SDL
+
+**事件历史**：
+- 环形缓冲，容量 4096，保留最近 250ms
+- 每个事件带纳秒级时间戳
+- 用于输入缓冲、连招窗口、精确判定
+
+**已处理的问题**：
+- 快速点射丢输入（分表记录 pressed/released）
+- 中文输入法吞键（线程级 `ImmDisableIME`）
+- 编辑器模式 Raw Input 失效（自动回退 SDL）
+
+**待解决**：
+- InputMap（键位映射）
+- 独立输入线程（阶段 3）
+- 手柄支持（架构预留）
+
+### 3.2 物理系统
+
+**定位**：Layer 1 完整，Layer 2 由角色控制器实现。**不是刚体动力学引擎。**
+
+**支持形状**：
+- Sphere（解析射线、解析碰撞）
+- Capsule（采样射线、最近点碰撞）
+- Box（解析射线、最近点碰撞）
+
+**Broadphase**：
+- BruteForceBroadphase（O(N²)，N<200 时零负担）
+- 懒删除 + 压缩
+- 抽象接口，将来可换 SAP/BVH
+
+**Narrowphase**：
+- 6 种形状对全部支持
+- Sphere-Sphere / Capsule-Sphere / Sphere-Box / Capsule-Capsule / Capsule-Box
+- Ericson 线段对线段算法
+
+**场景查询**：
+- Raycast（射线检测）
+- Sweep（保守推进，防穿墙）
+- Overlap（重叠检测）
+- **查询是单向的**：`queryMask` 只表示"我想查哪些层"
+
+**碰撞过滤**：
+- `CollisionFilter { category, mask }`
+- `CanCollideWith` 用于碰撞对（双向）
+- 查询直接用 `category & queryMask`
+
+### 3.3 Debug 可视化
+
+**DebugDraw**：
+- 动态顶点缓冲，host visible + coherent
+- 每帧 Begin → 若干 Line/Box/Sphere/Capsule/Ray/Cross → 自动上传
+- 线段用 `VK_PRIMITIVE_TOPOLOGY_LINE_LIST`
+- 深度偏移避免 z-fighting
+
+**用途**：
+- 物理形状可视化
+- 射线可视化
+- 弹幕轨迹、AI 感知范围、Boss 攻击范围
+
+### 3.4 音频时钟
+
+**AudioClock**：
+- 纯时间管理，**无音频后端**
+- 由外部 `Tick(dt)` 驱动，和渲染帧同步
+- 支持播放/暂停/停止/跳转/变速/循环/结束回调
+- 秒 + 采样两种时间单位
+
+**将来**：AudioSystem（WASAPI 独占模式）接入，AudioClock 用真实播放位置反推。
+
+---
+
+## 四、当前性能指标
+
+| 指标 | 值 | 场景 |
+|------|-----|------|
+| 平均帧时间 | 0.25ms | 9 球 + 地面 + 编辑器关闭 |
+| 峰值 FPS | 4000+ | 同上 |
+| 物理每帧开销 | < 0.01ms | 2 个形状 + 1 次 Raycast |
+| 输入延迟 | 待测 | Raw Input 已就绪 |
+
+**内存**：
+- 引擎启动峰值：约 20MB
+- 帧内热路径堆分配：0（除 ImGui 外）
+
+---
+
+## 五、技术债务
+
+| 项 | 严重度 | 计划 |
+|-----|--------|------|
+| 移动逻辑硬编码 scancode | 中 | InputMap 阶段解决 |
+| 空格同时跳跃和射击 | 中 | InputMap 阶段解决 |
+| 相机 yaw 在编辑器模式下不更新 | 低 | 后续修 |
+| 无水平碰撞 | 高 | 状态机之后做 Sweep 接入 |
+| 物理查询 API 曾用错语义 | 已修 | — |
+| 编辑器用 ImGui，游戏内 UI 未做 | 中 | 后续做 UILayer |
+| 音频无后端 | 高 | 有音乐素材后做 |
+| PrismSpectra 未实现 | 低 | 材质阶段做 |
+
+---
+
+## 六、里程碑
+
+### M1：引擎地基（已完成）
+- Vulkan 渲染管线
+- 输入系统（含 Raw Input）
+- 物理基础设施
+- 编辑器框架
+
+### M2：角色控制器（进行中）
+- 重力、跳跃、地面检测 ✅
+- 加速度曲线、摩擦、空中控制 ⬜
+- 状态机骨架（Idle/Run/Jump/Land） ⬜
+- InputMap ⬜
+- 水平碰撞（Sweep 接入） ⬜
+
+### M3：完整动作套件
+- Dash、Slide、WallRun、WallJump、Peek
+- 动作优先级
+- 输入缓冲
+- 手感调校工具
+
+### M4：Noriko 玩法
+- 谱面系统
+- 弹幕
+- 能量/技能
+- 角色/武器
+- 关卡编辑器
+
+### M5：音频与多媒体
+- WASAPI 后端
+- 音乐同步
+- 音效系统
+
+### M6：内容与发布
+- 第一章内容
+- UI 层
+- 存档
+- 打包发布
+
+---
+
+## 七、设计原则总结
+
+**做：**
+- 只做 Noriko 和已知项目需要的
+- 性能可量化、可对比
+- 接口清晰、模块独立
+- 早发现早修复 bug
+- 现在能用就不要等以后
+
+**不做：**
+- 通用引擎抽象
+- 为"未来可能"做空壳
+- 异常、RTTI、隐藏开销
+- 热路径堆分配
+- 无意义的第三方依赖
