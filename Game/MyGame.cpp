@@ -2,6 +2,7 @@
 
 #include <SDL.h>
 #include <cstdio>
+#include <memory>
 
 #include "NyxEngine/NyxEngine.h"
 #include "NyxEngine/Core/Logger.h"
@@ -12,6 +13,9 @@
 #include "NyxEngine/Render/FrameData.h"
 #include "NyxEngine/Scene/Camera.h"
 #include "NyxEngine/Render/DebugDraw.h"
+#include "NyxEngine/Physics/PhysicsWorld.h"
+#include "NyxEngine/Physics/Shapes/BoxShape.h"
+#include "NyxEngine/Physics/Shapes/CapsuleShape.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_sdl2.h>
@@ -54,6 +58,40 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     // 显示模式
     displayModes_ = GetAvailableDisplayModes();
     pendingSettings_ = engine.GetVulkanContext().settings;
+
+    // ---------- 物理世界初始化 ----------
+    {
+        PhysicsWorld& physics = engine.GetWorldState().physics;
+        Player& player = engine.GetWorldState().player;
+
+        // 地面
+        CollisionFilter groundFilter = CollisionFilter::Make(
+            PhysicsLayer::StaticGeo,
+            PhysicsLayer::Player | PhysicsLayer::Projectile | PhysicsLayer::Debris);
+
+        Transform groundT;
+        groundT.position = glm::vec3(0.0f, -2.1f, 0.0f);
+
+        physics.CreateShape(
+            std::make_unique<BoxShape>(glm::vec3(30.0f, 0.1f, 30.0f)),
+            groundT,
+            groundFilter);
+
+        // 玩家胶囊
+        CollisionFilter playerFilter = CollisionFilter::Make(
+            PhysicsLayer::Player,
+            PhysicsLayer::StaticGeo | PhysicsLayer::Target | PhysicsLayer::Boss);
+
+        Transform playerT;
+        playerT.position = player.GetCapsuleCenter();
+
+        player.physicsBody = physics.CreateShape(
+            std::make_unique<CapsuleShape>(Player::kCapsuleRadius, Player::kCapsuleHalfHeight),
+            playerT,
+            playerFilter);
+
+        NYX_LOG_INFO("Physics: ground + player capsule created");
+    }
 
     // 编辑器面板
     EditorPanel::Context ctx;
@@ -188,7 +226,22 @@ void MyGame::Update(float dt) {
     }
 
     // ---------- 玩家更新 ----------
-    player.Update(dt);
+    // 从 WASD 生成移动方向（相机 yaw 空间的水平方向）
+    glm::vec3 moveDir(0.0f);
+    if (!editorMode_) {
+        float yaw = camera.yaw;
+        glm::vec3 forward(sin(yaw), 0.0f, -cos(yaw));
+        glm::vec3 right(cos(yaw), 0.0f, sin(yaw));
+
+        if (input.IsKeyDown(SDL_SCANCODE_W)) moveDir += forward;
+        if (input.IsKeyDown(SDL_SCANCODE_S)) moveDir -= forward;
+        if (input.IsKeyDown(SDL_SCANCODE_D)) moveDir += right;
+        if (input.IsKeyDown(SDL_SCANCODE_A)) moveDir -= right;
+    }
+
+    bool jumpPressed = !editorMode_ && input.WasKeyPressed(SDL_SCANCODE_SPACE);
+
+    player.Update(dt, moveDir, jumpPressed, camera.yaw, engine_->GetWorldState().physics);
 
     // ---------- 游戏逻辑 ----------
     uint32_t currentTime = SDL_GetTicks();
@@ -330,26 +383,30 @@ void MyGame::Render() {
     frameData.lighting = lightingData;
     frameData.imgui = &engine_->GetImGuiManager();
 
-    // ---------- 临时测试：Debug Draw ----------
+    // ---------- Debug Draw：物理世界可视化 ----------
     {
         DebugDraw& dbg = engine_->GetRenderer().GetDebugDraw();
+        PhysicsWorld& physics = engine_->GetWorldState().physics;
         dbg.Begin();
 
-        // 红球：原点前方
-        dbg.Sphere(glm::vec3(0, 1, 5), 0.5f, glm::vec3(1, 0, 0));
+        // 画出物理世界中的所有形状
+        // 简化：只画已知的几个（地面 + 玩家胶囊），
+        // 等 PhysicsWorld 有 ForEachShape 再加
+        dbg.Box(glm::vec3(0.0f, -2.1f, 0.0f),
+                glm::vec3(30.0f, 0.1f, 30.0f),
+                glm::quat(1, 0, 0, 0),
+                glm::vec3(0.4f, 0.4f, 0.4f));
 
-        // 绿胶囊：右边
-        dbg.Capsule(glm::vec3(2, 0.5f, 5), glm::vec3(2, 2.5f, 5), 0.4f,
-                    glm::vec3(0, 1, 0));
-
-        // 蓝盒：左边
-        dbg.Box(glm::vec3(-2, 1, 5), glm::vec3(0.5f), glm::quat(1,0,0,0),
-                glm::vec3(0, 0, 1));
+        // 玩家胶囊
+        glm::vec3 capsuleCenter = player.GetCapsuleCenter();
+        glm::vec3 p0 = capsuleCenter - glm::vec3(0, Player::kCapsuleHalfHeight, 0);
+        glm::vec3 p1 = capsuleCenter + glm::vec3(0, Player::kCapsuleHalfHeight, 0);
+        dbg.Capsule(p0, p1, Player::kCapsuleRadius, glm::vec3(0.3f, 0.9f, 0.3f));
 
         // 黄射线：从眼睛往前
         dbg.Ray(eyePos, camera.GetDirection(), 10.0f, glm::vec3(1, 1, 0));
     }
-    // ---------- 临时测试结束 ----------
+    // ---------- Debug Draw 结束 ----------
 
     engine_->GetRenderer().DrawFrame(vk, frameData);
 }

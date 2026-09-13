@@ -58,20 +58,15 @@ public:
 
     // ---------- 查询 ----------
 
-    // 射线检测。返回最近的命中。
-    // queryLayer: 只想查询哪些层（作为 category 用的快捷方式，mask 自动取 All）
     RaycastHit Raycast(const glm::vec3& origin, const glm::vec3& direction,
-                       float maxDistance, uint32_t queryCategory) const;
+                       float maxDistance, uint32_t queryMask) const;
 
-    // 扫掠。形状沿方向移动，返回第一次命中。
-    // 如果形状起点就重叠，返回 t=0 的命中。
     SweepHit Sweep(const Shape& shape, const Transform& start,
                    const glm::vec3& direction, float maxDistance,
-                   uint32_t queryCategory) const;
+                   uint32_t queryMask) const;
 
-    // 重叠。返回所有与给定形状相交的形状句柄。
     void Overlap(const Shape& shape, const Transform& t,
-                 uint32_t queryCategory,
+                 uint32_t queryMask,
                  std::vector<ShapeHandle>& out) const;
 
     // ---------- 碰撞对 ----------

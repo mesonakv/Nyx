@@ -8,8 +8,6 @@
 namespace {
 
 // Ray vs Sphere（解析解）
-// ray: p(t) = o + t*d, t ∈ [0, maxT]
-// sphere: |p - c|^2 = r^2
 bool RaySphere(const glm::vec3& o, const glm::vec3& d, float maxT,
                const glm::vec3& c, float r,
                float& outT, glm::vec3& outNormal)
@@ -18,14 +16,13 @@ bool RaySphere(const glm::vec3& o, const glm::vec3& d, float maxT,
     float b = glm::dot(m, d);
     float cc = glm::dot(m, m) - r * r;
 
-    // 射线起点在球外且指向远离球的方向
     if (cc > 0.0f && b > 0.0f) return false;
 
     float discr = b * b - cc;
     if (discr < 0.0f) return false;
 
     float t = -b - std::sqrt(discr);
-    if (t < 0.0f) t = 0.0f;      // 起点在球内
+    if (t < 0.0f) t = 0.0f;
 
     if (t > maxT) return false;
 
@@ -35,7 +32,7 @@ bool RaySphere(const glm::vec3& o, const glm::vec3& d, float maxT,
     return true;
 }
 
-// Ray vs AABB（slab method），在 AABB 的坐标系下
+// Ray vs AABB（slab method）
 bool RayAABB(const glm::vec3& o, const glm::vec3& d, float maxT,
              const AABB& box,
              float& outT, glm::vec3& outNormal)
@@ -83,8 +80,6 @@ bool RayAABB(const glm::vec3& o, const glm::vec3& d, float maxT,
 }
 
 // Ray vs Capsule（采样近似）
-// 用 kSteps 个球覆盖胶囊线段，取最近命中。
-// 精度不完美但足够角色控制器用。
 bool RayCapsule(const glm::vec3& o, const glm::vec3& d, float maxT,
                 const glm::vec3& p0, const glm::vec3& p1, float r,
                 float& outT, glm::vec3& outNormal)
@@ -116,15 +111,6 @@ bool RayCapsule(const glm::vec3& o, const glm::vec3& d, float maxT,
     return true;
 }
 
-// 形状到点的距离（用于保守推进）
-// 返回接触点、法线、穿透深度。positive 表示有穿透。
-struct ShapeDistanceResult {
-    bool valid = false;
-    glm::vec3 point;
-    glm::vec3 normal;
-    float distance = 0.0f;   // 负值 = 穿透
-};
-
 } // anonymous namespace
 
 // ============ 生命周期 ============
@@ -150,7 +136,7 @@ ShapeHandle PhysicsWorld::AllocHandle() {
         uint32_t idx = freeIndices_.back();
         freeIndices_.pop_back();
         h.index = idx;
-        h.generation = entries_[idx].handle.generation + 1;  // 递增，旧句柄失效
+        h.generation = entries_[idx].handle.generation + 1;
     } else {
         h.index = (uint32_t)entries_.size();
         h.generation = 1;
@@ -174,7 +160,6 @@ ShapeHandle PhysicsWorld::CreateShape(std::unique_ptr<Shape> shape,
 
     aliveCount_++;
 
-    // 加入 Broadphase
     broadphase_->Insert(h, e.shape->GetWorldBounds(e.transform), e.filter);
 
     return h;
@@ -241,7 +226,7 @@ const CollisionFilter* PhysicsWorld::GetFilter(ShapeHandle handle) const {
 // ============ Raycast ============
 
 RaycastHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction,
-                                 float maxDistance, uint32_t queryCategory) const
+                                 float maxDistance, uint32_t queryMask) const
 {
     RaycastHit best;
     best.hit = false;
@@ -252,12 +237,9 @@ RaycastHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direc
     if (len < 1e-8f) return best;
     d /= len;
 
-    // 构造查询 filter：category 是 queryCategory，mask 取 All
-    CollisionFilter queryFilter = CollisionFilter::Make(queryCategory, PhysicsLayer::All);
-
     for (const auto& e : entries_) {
         if (!e.alive) continue;
-        if (!e.filter.CanCollideWith(queryFilter)) continue;
+        if ((e.filter.category & queryMask) == 0) continue;
 
         float t;
         glm::vec3 normal;
@@ -278,7 +260,6 @@ RaycastHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direc
         }
         case ShapeType::Box: {
             const auto& b = static_cast<const BoxShape&>(*e.shape);
-            // 把射线变换到 box 局部空间
             glm::vec3 localO = e.transform.InverseTransformPoint(origin);
             glm::vec3 localD = e.transform.InverseTransformDirection(d);
 
@@ -289,7 +270,6 @@ RaycastHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direc
 
             hit = RayAABB(localO, localD, best.distance, localBox, t, normal);
             if (hit) {
-                // normal 变回世界空间
                 normal = e.transform.TransformDirection(normal);
             }
             break;
@@ -312,7 +292,7 @@ RaycastHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direc
 
 SweepHit PhysicsWorld::Sweep(const Shape& shape, const Transform& start,
                              const glm::vec3& direction, float maxDistance,
-                             uint32_t queryCategory) const
+                             uint32_t queryMask) const
 {
     SweepHit result;
     result.hit = false;
@@ -322,13 +302,6 @@ SweepHit PhysicsWorld::Sweep(const Shape& shape, const Transform& start,
 
     glm::vec3 d = direction / dirLen;
 
-    // 保守推进（conservative advancement）：
-    // 每步检查当前形状是否和其他形状碰撞。
-    // 如果有碰撞，记录命中；如果没有，前进 step 距离。
-    // 简单但有效。
-
-    CollisionFilter queryFilter = CollisionFilter::Make(queryCategory, PhysicsLayer::All);
-
     constexpr float kStepSize = 0.02f;
     constexpr int kMaxSteps = 1024;
 
@@ -336,10 +309,9 @@ SweepHit PhysicsWorld::Sweep(const Shape& shape, const Transform& start,
     float traveled = 0.0f;
 
     for (int i = 0; i < kMaxSteps && traveled < maxDistance; i++) {
-        // 检查当前形状是否与任何形状重叠
         for (const auto& e : entries_) {
             if (!e.alive) continue;
-            if (!e.filter.CanCollideWith(queryFilter)) continue;
+            if ((e.filter.category & queryMask) == 0) continue;
 
             Contact c;
             if (Narrowphase::Test(shape, current, *e.shape, e.transform, c)) {
@@ -352,7 +324,6 @@ SweepHit PhysicsWorld::Sweep(const Shape& shape, const Transform& start,
             }
         }
 
-        // 前进
         float step = std::min(kStepSize, maxDistance - traveled);
         current.position += d * step;
         traveled += step;
@@ -364,14 +335,12 @@ SweepHit PhysicsWorld::Sweep(const Shape& shape, const Transform& start,
 // ============ Overlap ============
 
 void PhysicsWorld::Overlap(const Shape& shape, const Transform& t,
-                           uint32_t queryCategory,
+                           uint32_t queryMask,
                            std::vector<ShapeHandle>& out) const
 {
-    CollisionFilter queryFilter = CollisionFilter::Make(queryCategory, PhysicsLayer::All);
-
     for (const auto& e : entries_) {
         if (!e.alive) continue;
-        if (!e.filter.CanCollideWith(queryFilter)) continue;
+        if ((e.filter.category & queryMask) == 0) continue;
 
         Contact c;
         if (Narrowphase::Test(shape, t, *e.shape, e.transform, c)) {
@@ -383,11 +352,9 @@ void PhysicsWorld::Overlap(const Shape& shape, const Transform& t,
 // ============ 碰撞对 ============
 
 void PhysicsWorld::GenerateContacts(std::vector<Contact>& out) const {
-    // 1. Broadphase 生成候选对
     std::vector<BroadphasePair> pairs;
     broadphase_->GeneratePairs(pairs);
 
-    // 2. 对每对跑 Narrowphase
     out.clear();
     out.reserve(pairs.size());
 
@@ -410,6 +377,5 @@ void PhysicsWorld::GenerateContacts(std::vector<Contact>& out) const {
 // ============ 每帧 ============
 
 void PhysicsWorld::Step(float dt) {
-    // 现在空。将来加刚体求解器时在这里实现。
     (void)dt;
 }
