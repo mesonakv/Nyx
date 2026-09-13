@@ -8,7 +8,7 @@
 //   - 不放运行时状态（分数、目标位置等），那些属于 Game 层
 //   - 不放资产数据（材质、mesh），那些属于项目文件
 //
-// 当前阶段（T3.0）：只是把散落在 main.cpp 的参数收进来
+// 当前阶段：把散落在 main.cpp 的参数收进来
 // 未来阶段：加 JSON 序列化、分组、元数据表
 
 // ---------- 光照 ----------
@@ -28,14 +28,18 @@ struct LightingConfig {
     glm::vec3 moonColor = {0.35f, 0.45f, 1.0f};
 };
 
+// ---------- 玩家 ----------
+struct PlayerConfig {
+    glm::vec3 initialPosition = {0.0f, 0.0f, 8.0f};
+    float eyeHeight = 1.7f;
+};
+
 // ---------- 相机 ----------
 struct CameraConfig {
-    glm::vec3 initialPosition = {0.0f, 1.5f, 8.0f};
-    float initialPitch = 0.15f;
     float initialYaw = 0.0f;
-
-    // 注意：sensitivity 和 fov 目前仍由 Camera 类持有
-    // 等 T3.4 NyxEngine 收口时，会统一挪到这里
+    float initialPitch = 0.15f;
+    float sensitivity = 0.003f;
+    float fov = 90.0f;
 };
 
 // ---------- 渲染 ----------
@@ -47,6 +51,7 @@ struct RenderConfig {
 // ---------- 引擎配置总入口 ----------
 struct EngineConfig {
     LightingConfig lighting;
+    PlayerConfig player;
     CameraConfig camera;
     RenderConfig render;
 };

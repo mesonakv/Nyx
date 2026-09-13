@@ -12,7 +12,7 @@ void Camera::ProcessMouseDelta(float dx, float dy) {
 
     const float twoPi = 2.0f * 3.14159265358979323846f;
     yaw = fmod(yaw, twoPi);
-    if (yaw < 0.0f) yaw += twoPi;   // 修复：负值时归一化到 [0, 2π)
+    if (yaw < 0.0f) yaw += twoPi;
 }
 
 glm::vec3 Camera::GetDirection() const {
@@ -23,22 +23,22 @@ glm::vec3 Camera::GetDirection() const {
     return glm::normalize(dir);
 }
 
-glm::mat4 Camera::GetViewMatrix() const {
+glm::mat4 Camera::GetViewMatrix(const glm::vec3& eyePos) const {
     if (viewCacheValid_ &&
         lastYaw_ == yaw &&
         lastPitch_ == pitch &&
-        lastPosition_ == position) {
+        lastEyePos_ == eyePos) {
         return cachedView_;
     }
 
     glm::vec3 dir = GetDirection();
     glm::vec3 right = glm::normalize(glm::cross(dir, glm::vec3(0, 1, 0)));
     glm::vec3 up = glm::normalize(glm::cross(right, dir));
-    cachedView_ = glm::lookAt(position, position + dir, up);
+    cachedView_ = glm::lookAt(eyePos, eyePos + dir, up);
 
     lastYaw_ = yaw;
     lastPitch_ = pitch;
-    lastPosition_ = position;
+    lastEyePos_ = eyePos;
     viewCacheValid_ = true;
 
     return cachedView_;

@@ -42,6 +42,11 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     performanceFrequency_ = SDL_GetPerformanceFrequency();
     lastFrameCounter_ = SDL_GetPerformanceCounter();
 
+    // 玩家
+    const EngineConfig& config = engine.GetConfig();
+    player_.position = config.player.initialPosition;
+    player_.eyeHeight = config.player.eyeHeight;
+
     // 材质
     materials_.LoadDefaults();
 
@@ -118,7 +123,6 @@ void MyGame::ProcessEvent(const SDL_Event& e) {
 
     if (e.type != SDL_WINDOWEVENT) return;
 
-    // A2: 这些事件可能改变 display mode
     if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
         e.window.event == SDL_WINDOWEVENT_RESIZED ||
         e.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
@@ -167,7 +171,6 @@ void MyGame::Update(float dt) {
     if (!editorMode_) {
         camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());
     }
-	
 
     // ---------- 最小化分支 ----------
     if (windowMinimized_) {
@@ -185,12 +188,16 @@ void MyGame::Update(float dt) {
         HandleDisplayChange();
     }
 
+    // ---------- 玩家更新 ----------
+    player_.Update(dt);
+
     // ---------- 游戏逻辑 ----------
     uint32_t currentTime = SDL_GetTicks();
 
     if (!editorMode_) {
         if (input.IsKeyDown(SDL_SCANCODE_SPACE) && currentTime - lastShotTime_ > 200) {
-            targets_.Shoot(camera.position, camera.GetDirection());
+            glm::vec3 eyePos = player_.GetEyePosition();
+            targets_.Shoot(eyePos, camera.GetDirection());
             lastShotTime_ = currentTime;
         }
         if (input.IsKeyDown(SDL_SCANCODE_R)) {
@@ -258,7 +265,6 @@ void MyGame::HandleDisplayChange() {
     engine_->GetImGuiManager().RecreatePipeline(vk);
     swapchainDestroyed_ = false;
 
-    // A2: 分辨率/刷新率变了，标脏
     displayModeDirty_ = true;
 
     pendingDisplayChange_ = false;
@@ -312,10 +318,12 @@ void MyGame::Render() {
     const auto& aliveScales = targets_.GetAliveScales();
     const auto& aliveMaterialIndices = targets_.GetAliveMaterialIndices();
 
+    glm::vec3 eyePos = player_.GetEyePosition();
+
     FrameData frameData;
-    frameData.view = camera.GetViewMatrix();
+    frameData.view = camera.GetViewMatrix(eyePos);
     frameData.proj = camera.GetProjectionMatrix(aspect);
-    frameData.cameraPos = camera.position;
+    frameData.cameraPos = eyePos;
     frameData.targetPositions = &alivePositions;
     frameData.targetScales = &aliveScales;
     frameData.targetMaterialIndices = &aliveMaterialIndices;

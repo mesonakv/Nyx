@@ -8,16 +8,17 @@
 #include "NyxEngine/Core/FrameTimeHistory.h"
 #include "NyxEngine/Core/VulkanContext.h"
 #include "Game/Target/TargetManager.h"
+#include "Game/Player.h"
 
 class NyxEngine;
 
 // ============ MyGame ============
 //
-// 训练器游戏逻辑的容器。
+// 游戏逻辑的容器。
 //
 // 职责：
-//   - 持有游戏对象（Materials, Targets, Editor）
-//   - 持有游戏状态（editorMode, running, window 状态）
+//   - 持有游戏对象（Player、Materials、Targets、Editor）
+//   - 持有游戏状态（editorMode、running、窗口状态）
 //   - 驱动主循环（Run 内部有 while）
 //   - 处理 SDL 事件、显示设置变更、标题更新
 //
@@ -43,6 +44,7 @@ private:
     SDL_Window* window_ = nullptr;
 
     // ---------- 游戏对象 ----------
+    Player player_;
     MaterialLibrary materials_;
     TargetManager targets_;
     EditorPanel editor_;
@@ -70,7 +72,7 @@ private:
     uint64_t performanceFrequency_ = 0;
     uint64_t lastFrameCounter_ = 0;
 
-    // ---------- 标题缓存（A1 + A2）----------
+    // ---------- 标题缓存 ----------
     int lastTitleScore_ = -1;
     uint32_t lastTitleFPS_ = 0xFFFFFFFFu;
     SDL_DisplayMode cachedDisplayMode_ = {};
