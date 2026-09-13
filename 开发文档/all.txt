@@ -1,0 +1,1457 @@
+Nyx 引擎开发文档
+版本 3.0.0
+状态：引擎基础设施完整，进入视觉阶段
+最后更新：2026-09-13
+
+1. 项目概述
+Nyx 是一个模块化专用游戏引擎，由 NokaNod 开发，为三个应用服务：
+
+Nyx Trainer / Noriko：第一人称节奏射击训练器（由 Noriko 承载）
+
+Nova：球体地球模拟器级别的巨型 RPG
+
+未来项目：任何需要低延迟、高帧率、模块化架构的游戏
+
+Nyx 不是通用引擎，不做"什么游戏都能做"的承诺。它为已知应用服务，为它们做足基础设施，使得游戏开发阶段尽量不改引擎。
+
+1.1 命名体系
+名字	角色	说明
+NokaNod	工作室	灵感来自诺和诺德（Novo Nordisk）的读音节奏
+Nyx	引擎	希腊夜之女神，暗合冷黑 + 亮蓝的视觉身份
+Noriko	训练器 / 音游	由训练器改造，引入音游元素
+Nova	地球 RPG	原 Terra，早期策略不变，后期扩展多场景
+1.2 核心设计理念
+理念	含义
+专用而非通用	只为已知应用服务，不做无意义抽象
+模块化	核心层 + 应用层，编译可选，互不拖累
+C++ 但 C 风格	禁用异常、RTTI，无隐藏开销
+配置驱动	一切可调参数集中在 EngineConfig
+克制	不做不需要的功能
+一次建好	引擎基础设施一次做完，游戏阶段不改引擎
+低延迟优先	输入延迟 ≤ 5ms，是所有应用的底线
+1.3 工程约束
+编译器：MSVC（Windows 首选）
+
+C++ 标准：C++17
+
+构建系统：CMake 4.4+
+
+不使用异常、RTTI
+
+不使用第三方重量级库（除 SDL2、Vulkan、ImGui、glm 外）
+
+线程安全：核心系统默认线程安全
+
+零分配热路径：每帧关键路径不分配堆内存
+
+2. 架构总览
+2.1 三层架构
+text
+┌─────────────────────────────────────────────────┐
+│                  应用层                          │
+│  ┌──────────────────┐  ┌──────────────────────┐ │
+│  │  Noriko          │  │      Nova            │ │
+│  │  (MyGame)        │  │  (NovaGame)          │ │
+│  └──────────────────┘  └──────────────────────┘ │
+├─────────────────────────────────────────────────┤
+│                  核心层                          │
+│  渲染 / 输入 / 光照 / 音频 / 资源 / 编辑器       │
+│  日志 / 内存 / 数学 / 文件 / 事件 / 线程         │
+│  配置 / 序列化 / 平台抽象                        │
+│  （所有应用共享）                                │
+├─────────────────────────────────────────────────┤
+│                  平台层                          │
+│  SDL2 / Vulkan / Windows / (未来) Linux / OpenXR│
+└─────────────────────────────────────────────────┘
+2.2 目录结构
+text
+D:\Dev\NyxEngine\
+├── NyxEngine\                    # 引擎核心
+│   ├── Core\                     # 基础层
+│   │   ├── VulkanContext.h/.cpp
+│   │   ├── ImGuiManager.h/.cpp
+│   │   ├── InputSystem.h/.cpp
+│   │   ├── Logger.h/.cpp
+│   │   ├── Memory.h/.cpp
+│   │   ├── Platform.h/.cpp
+│   │   ├── FileSystem.h/.cpp
+│   │   ├── NyxMath.h
+│   │   ├── EventBus.h/.cpp
+│   │   ├── JobSystem.h/.cpp
+│   │   ├── JsonValue.h/.cpp
+│   │   ├── FrameTimeHistory.h
+│   │   └── EngineConfig.h
+│   ├── Render\                   # 渲染
+│   │   ├── Renderer.h/.cpp
+│   │   ├── LightingSystem.h/.cpp
+│   │   ├── FrameData.h
+│   │   └── PrismSpectra（待建）
+│   ├── Scene\                    # 场景
+│   │   ├── Camera.h/.cpp
+│   │   └── Material.h/.cpp
+│   ├── Audio\                    # 音频（待建）
+│   ├── Editor\                   # 编辑器
+│   │   ├── EditorPanel.h/.cpp
+│   │   ├── CameraPanel.h/.cpp
+│   │   ├── MaterialPanel.h/.cpp
+│   │   ├── TargetMovementPanel.h/.cpp
+│   │   ├── DisplaySettingsPanel.h/.cpp
+│   │   ├── LightingPanel.h/.cpp
+│   │   └── PerformancePanel.h/.cpp
+│   ├── Resource\                 # 资源系统
+│   │   ├── MeshData.h
+│   │   ├── Mesh.h
+│   │   ├── MeshLoader.h/.cpp
+│   │   └── ResourceManager.h/.cpp
+│   └── NyxEngine.h/.cpp          # 引擎实例
+├── Game\                         # 游戏内容
+│   └── ...                       # 各游戏自己的目录
+├── Shaders\
+│   ├── ball.vert / ball.frag
+│   ├── sky.vert / sky.frag
+│   └── sky_sample.glsl（待建）
+├── ThirdParty\
+├── 开发文档\
+├── CMakeLists.txt
+└── main.cpp
+3. 核心模块
+3.1 VulkanContext
+职责：Vulkan 实例、设备、swapchain、render pass、命令池。
+
+关键特性：
+
+三种窗口模式（Windowed / Borderless / Exclusive Fullscreen）
+
+多帧并行（MAX_FRAMES_IN_FLIGHT = 2）
+
+swapchain 重建安全
+
+MSAA 支持（1/2/4/8）
+
+Present mode 自动查询
+
+接口：
+
+cpp
+class VulkanContext {
+public:
+    void Initialize(SDL_Window*, const DisplaySettings&);
+    void Shutdown();
+    void RecreateSwapchain(SDL_Window*);
+    void DestroySwapchainResources();
+    uint32_t FindMemoryType(uint32_t, VkMemoryPropertyFlags);
+    VkSampleCountFlagBits GetMSAASamples() const;
+};
+3.2 Renderer
+职责：主渲染管线，mesh 上传，命令缓冲录制。
+
+关键接口：
+
+cpp
+void DrawFrame(VulkanContext& ctx, const FrameData& frame);
+void UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t vertexBytes,
+                    VkBuffer& outBuffer, VkDeviceMemory& outMemory);
+Push constant 布局：
+
+cpp
+struct ObjectPushData {
+    glm::mat4 model;      // 64 字节
+    glm::vec4 color;      // 16
+    glm::vec4 material;   // 16: x=metallic, y=roughness, z=emissive, w=isScreenSpace
+    // 32 字节余量给 PrismSpectra
+};
+Uniform buffer 布局（每帧）：
+
+cpp
+struct FrameUniforms {
+    glm::mat4 viewProj;
+    glm::vec4 cameraPos;
+    glm::vec4 lightDirAndIntensity;
+    glm::vec4 lightColor;
+    glm::vec4 ambientColor;
+};
+3.3 InputSystem
+职责：SDL 事件采集，鼠标/键盘状态缓存。
+
+设计原则：只采集，不解释。不知道 F1 是切编辑器。
+
+接口：
+
+cpp
+float GetMouseDeltaX() const;
+float GetMouseDeltaY() const;
+bool IsKeyDown(SDL_Scancode key) const;
+bool WasKeyPressed(SDL_Scancode key) const;
+bool WasKeyReleased(SDL_Scancode key) const;
+void SetMouseCaptured(bool captured);
+bool ShouldQuit() const;
+3.4 LightingSystem
+职责：从 EngineConfig.lighting 计算光照数据。
+
+输出：
+
+cpp
+struct LightingData {
+    glm::vec3 lightDir;
+    glm::vec3 lightColor;
+    float lightIntensity;
+    glm::vec3 ambientColor;
+    glm::vec4 skyTopColor;
+    glm::vec4 skyBottomColor;
+};
+时间语义：timeOfDay ∈ [0, 1]
+
+0.00 午夜
+
+0.25 日出
+
+0.50 正午
+
+0.75 日落
+
+3.5 EngineConfig
+职责：集中管理引擎层可调参数。
+
+cpp
+struct EngineConfig {
+    LightingConfig lighting;
+    CameraConfig camera;
+    RenderConfig render;
+    // 未来：AudioConfig, NetworkConfig, WorldConfig...
+};
+3.6 EditorPanel
+职责：编辑器 UI 框架，容器 + 子面板。
+
+六个子面板：Camera / Material / TargetMovement / DisplaySettings / Lighting / Performance
+
+3.7 NyxEngine
+职责：引擎实例容器，持有所有子系统。
+
+cpp
+class NyxEngine {
+public:
+    void Initialize(SDL_Window* window, const DisplaySettings& settings);
+    void Shutdown();
+    void BeginFrame();
+    void EndFrame();
+
+    EngineConfig& GetConfig();
+    VulkanContext& GetVulkanContext();
+    ImGuiManager& GetImGuiManager();
+    Renderer& GetRenderer();
+    InputSystem& GetInput();
+    LightingSystem& GetLighting();
+    Camera& GetCamera();
+};
+4. 基础设施模块
+4.1 Logger
+职责：统一日志输出。
+
+分级：Trace / Debug / Info / Warn / Error / Fatal
+
+用法：
+
+cpp
+NYX_LOG_INFO("GPU: %s", props.deviceName);
+NYX_LOG_FATAL("Cannot recover");  // 记录后 abort
+4.2 Memory
+职责：分配追踪，泄漏检测。
+
+用法：
+
+cpp
+Foo* f = NYX_NEW(Foo, "Render");
+NYX_DELETE(Foo, f);
+void* buf = NYX_ALLOC(1024, "Temp");
+NYX_FREE(buf);
+4.3 NyxMath
+职责：glm 薄封装 + 项目工具函数。
+
+重要提示：任何 include glm 的文件，都要先 include <cmath>。或者直接 include NyxMath.h。
+
+4.4 FileSystem
+职责：文件读写、路径处理。
+
+4.5 Platform
+职责：隔离操作系统 API（计时、睡眠、CPU 核心数、平台信息）。
+
+4.6 EventBus
+职责：类型安全的事件总线。
+
+用法：
+
+cpp
+struct TimeChangedEvent { float timeOfDay; };
+auto handle = EventBus::Subscribe<TimeChangedEvent>([](const TimeChangedEvent& e) {
+    NYX_LOG_INFO("time changed to %f", e.timeOfDay);
+});
+EventBus::Emit(TimeChangedEvent{0.5f});
+EventBus::Unsubscribe(handle);
+4.7 JobSystem
+职责：线程池，异步任务。
+
+用法：
+
+cpp
+JobSystem jobs;
+jobs.Initialize();
+jobs.Submit([]() { /* 后台执行 */ });
+jobs.WaitAll();
+jobs.Shutdown();
+4.8 JsonValue
+职责：JSON 解析和序列化。
+
+支持：Null / Bool / Int / Float / String / Array / Object
+不支持：注释、NaN、Infinity、BMP 外的 Unicode 转义
+
+5. Resource 系统
+5.1 MeshData
+cpp
+struct MeshVertex {
+    glm::vec3 position;  // 12
+    glm::vec3 normal;    // 12
+    glm::vec3 color;     // 12
+};                       // 共 36 字节
+
+struct MeshData {
+    std::vector<MeshVertex> vertices;
+    std::vector<uint32_t> indices;
+};
+5.2 MeshLoader
+职责：从 .obj 加载网格。
+
+支持：v、vn、f（v、v//vn、v/vt/vn）
+不支持：vt、mtl、o、g、s
+
+5.3 ResourceManager
+职责：资源缓存 + 引用计数。
+
+用法：
+
+cpp
+ResourceManager res;
+auto mesh = res.LoadMesh("assets/cube.obj");
+if (mesh) {
+    const MeshData& data = mesh->GetData();
+}
+6. PrismSpectra（琉光幻彩）
+职责：Nyx 的材质光学质感系统。
+
+6.1 五个组件
+组件	描述	实现
+菲涅尔	正面弱反射，斜角强反射	Schlick 近似
+干净反射	反射天空，清晰不模糊	程序化天空采样
+清晰折射	透过玻璃的目标依然锐利	屏幕空间 UV 偏移
+色散	高光边缘极淡的蓝紫粉偏移	RGB 三通道不同折射率
+微泛光	高光周围极克制的辉光	后处理 Bloom
+6.2 设计哲学
+克制：泛光只在高光边缘出现，且非常轻微
+
+真实之上：物理正确，但更强调干净的视觉体验
+
+可复用：同一套光学规则应用于玻璃、珠光、金属、油墨
+
+6.3 材质参数
+cpp
+struct Material {
+    // 基础 PBR
+    glm::vec4 color;
+    float metallic;
+    float roughness;
+    float emissive_strength;
+    float opacity;
+
+    // 琉光幻彩
+    float fresnelStrength;     // 0 = 自动从 metallic 推导
+    float dispersion;          // 0~0.1
+    float refractionStrength;  // 0~1
+    float bloomTint;           // 0 = 无泛光
+};
+6.4 实现路线
+菲涅尔 + 干净反射（当前）
+
+清晰折射 + 色散
+
+微泛光（后处理 Bloom）
+
+6.5 天空解耦
+关键设计：所有需要天空颜色的地方通过 SampleSky(dir, params) 访问。
+
+glsl
+// Shaders/sky_sample.glsl
+struct SkyParams {
+    vec4 topColor;
+    vec4 bottomColor;
+    vec3 sunDir;
+    vec3 sunColor;
+    float timeOfDay;
+};
+
+vec3 SampleSky(vec3 dir, const SkyParams params);
+天空实现可以自由改变（渐变 → 散射 → 云），琉光幻彩不受影响。
+
+7. 音频系统（待建）
+后端：miniaudio（单头文件、跨平台、低延迟）
+
+定位：Noriko 和 Nova 共用。
+
+7.1 双游戏需求
+需求	Noriko	Nova
+低延迟	✅ 必须	⚪ 需要
+节拍同步	✅ 必须	❌
+空间音频	⚪ 基础	✅ 必须
+环境音	❌	✅ 必须
+天气音	❌	✅ 必须
+HRTF	❌	✅ 可选
+7.2 接口设计
+cpp
+class AudioSystem {
+public:
+    void Initialize();
+    void Shutdown();
+    void Update(float dt);
+
+    SoundHandle Play(const std::string& path, const PlayParams&);
+    void Stop(SoundHandle);
+    void SetVolume(AudioGroup, float);
+    void SetListenerPosition(const Vec3& pos, const Vec3& forward, const Vec3& up);
+
+    // Noriko 专用
+    double GetPlaybackTime(SoundHandle) const;
+    void SyncToBeat(double beatTime);
+};
+8. 工程哲学
+8.1 代码风格
+C++ 但 C 风格
+
+禁用异常、RTTI
+
+函数名：PascalCase
+
+成员变量：snake_case_（尾部下划线）
+
+常量：kConstantName
+
+宏：NYX_MACRO_NAME
+
+8.2 内存管理
+核心系统默认预分配
+
+热路径零分配
+
+使用 Memory 封装
+
+不用 new / delete，用 NYX_NEW / NYX_DELETE
+
+8.3 错误处理
+不使用异常
+
+使用返回码或 assert（Debug）
+
+不可恢复错误 → NYX_LOG_FATAL + abort()
+
+可恢复错误 → 日志 + 返回 false
+
+8.4 命名空间
+核心层使用 nyx::
+
+应用层不加命名空间（或使用独立命名空间）
+
+9. 关键设计决策
+9.1 容器策略
+混合：使用 STL 容器 + 自定义 allocator。不自己写 vector、string。
+
+9.2 反射策略
+轻反射：宏或代码生成，支持序列化 + 编辑器自动 UI。（未来）
+
+9.3 JobSystem 策略
+先做简单线程池：一个任务队列，N 个 worker 线程，不支持任务依赖。
+
+9.4 音频后端
+miniaudio：单头文件、跨平台、低延迟。
+
+9.5 坐标系统
+Noriko：局部平面坐标
+
+Nova：ECEF 球体坐标（未来）
+
+两者通过接口切换，核心层不假设坐标类型。
+
+9.6 WorldState
+Noriko：不使用 WorldState
+
+Nova：使用 WorldState（未来）
+
+WorldState 是可选层，不是强制中介。
+
+10. 开发路线图
+阶段 A：引擎基础设施 ✅
+批次 1：基础层 ✅
+
+Logger / Memory / NyxMath / FileSystem / Platform
+
+批次 2：工具层 ✅
+
+EventBus / JobSystem / JsonValue
+
+批次 3：核心系统
+
+Resource ✅（最小版本）
+
+Audio（待建）
+
+Profiler（待建）
+
+CrashHandler（待建）
+
+批次 4：产品化
+
+Packaging（待建）
+
+ConfigPersistence（待建）
+
+Reflection（待建）
+
+阶段 B：性能优化 ✅
+A：热路径优化
+
+B：局部优化
+
+C：Vulkan 健壮性
+
+D：架构重构（FrameData / MyGame）
+
+E：Resource 系统
+
+阶段 C：视觉身份（当前）
+PrismSpectra
+
+阶段 D：音频系统
+miniaudio 集成
+
+Noriko 和 Nova 共用
+
+阶段 E：Noriko 开发
+训练器能力保留
+
+音游元素叠加
+
+自动化编曲器
+
+打包发布
+
+阶段 F：Nova 技术预研
+ECEF 坐标系统
+
+瓦片格式设计
+
+流式加载原型
+
+球面大气散射原型
+
+阶段 G：Nova 第一章
+全球 1km 地形
+
+自由相机
+
+球面大气
+
+基础水面
+
+11. 开发日志
+日期	内容
+2026-09-07	引擎雏形，Vulkan 渲染，球体射击，ImGui 编辑器
+2026-09-08	显示设置、MSAA、光照、阴影、天空、目标移动
+2026-09-10	项目结构重构，引擎/游戏/编辑器分层
+2026-09-12	阶段 0-3：架构重构（EngineConfig / NyxEngine / InputSystem / LightingSystem / EditorPanel）
+2026-09-12	批次 1-2：Logger / Memory / NyxMath / FileSystem / Platform / EventBus / JobSystem / JsonValue
+2026-09-13	优化 A-E：热路径优化、Camera 缓存、Present mode 查询、FrameData、MyGame 拆出、Resource 系统
+2026-09-13	命名体系确定：NokaNod / Nyx / Noriko / Nova
+2026-09-13	待办：PrismSpectra
+12. 一句话总结
+Nyx 是一个模块化专用引擎，由 NokaNod 开发，为 Noriko 和 Nova 两个平行应用服务。它一次把引擎基础设施建完，之后游戏开发不改引擎。它克制、干净、专用，为极致优化而生。
+
+文档状态： 引擎基础设施完整，准备进入视觉阶段
+最后更新： 2026-09-13
+下一步： PrismSpectra
+
+接下来是 Noriko 的开发文档。
+
+Noriko 开发文档
+版本 1.0.0
+状态：定位明确，待开发
+最后更新：2026-09-13
+
+1. 项目定位
+Noriko 是一款第一人称节奏射击游戏，由 NokaNod 开发，基于 NyxEngine。
+
+它的核心是训练器 + 音游的叠加：
+
+保留训练器的所有核心能力（瞄准训练、性能统计、低延迟）
+
+叠加音游元素（目标按音乐节奏出现、射击时机影响得分）
+
+新增自动化编曲器（从音频文件自动生成关卡）
+
+1.1 一句话定义
+一个用音乐训练枪法的游戏。它既是专业的瞄准训练器，也是一个可玩的节奏射击游戏。
+
+1.2 核心特征
+特征	说明
+低延迟	输入延迟 ≤ 5ms，继承训练器基因
+高帧率	1000+ FPS
+双模式	纯训练模式 + 节奏模式
+音乐驱动	目标按节拍出现，射击时机影响得分
+自动化编曲	从音频文件自动提取节拍，生成关卡
+性能统计	命中率、反应时间、节奏准确度
+1.3 非目标
+不做完整音游（不是 Beat Saber 的替代品）
+
+不做剧情 / 角色 / 故事
+
+不做多人对战
+
+不做手机版（至少第一版不做）
+
+2. 双模式设计
+2.1 纯训练模式
+继承现有训练器的全部能力。
+
+目标随机出现
+
+目标 4 种移动模式（Static / Linear / SineWave / RandomDirection）
+
+命中检测 + 计分
+
+性能统计（Avg / P99 / StdDev）
+
+材质预设切换
+
+编辑器面板
+
+这个模式的目标用户：FPS 竞技玩家，日常练枪。
+
+2.2 节奏模式
+新引入的游戏模式。
+
+加载一首音乐
+
+自动化编曲器提取节拍
+
+目标在节拍点出现
+
+玩家射击时机影响得分
+
+评分机制：
+
+射击时机偏差	评级	得分
+< 30ms	Perfect	100
+30~60ms	Great	80
+60~100ms	Good	60
+100~150ms	Bad	30
+> 150ms	Miss	0
+这个模式的目标用户：音游玩家 + 想要更有趣训练体验的 FPS 玩家。
+
+2.3 模式切换
+主菜单选择模式
+
+训练模式不加载音乐
+
+节奏模式需要先选择音乐文件
+
+两个模式共享：渲染管线、输入系统、材质系统、编辑器面板。
+
+3. 自动化编曲器
+3.1 定位
+不是"完美提取所有音乐信息"，而是"从音乐中提取节拍，生成射击节奏"。
+
+3.2 核心能力
+能力	优先级	说明
+节拍检测	必须	找到音乐的重拍
+节拍强度	高	区分强拍和弱拍
+段落划分	中	识别副歌、主歌、桥段
+音高提取	低	未来可能用于生成目标高度
+音源分离	极低	未来可能
+3.3 节拍检测算法
+起步方案：能量包络 + 峰值检测
+
+对音频做短时傅里叶变换（STFT）
+
+计算每个频带的能量
+
+用低频能量（kick drum）做节拍候选
+
+峰值检测 → 节拍点
+
+准确率：对流行、电子、摇滚可到 80~90%。
+
+进阶方案：用现成的库
+
+librosa（Python）：成熟，但需要 Python 集成
+
+aubio（C）：轻量，可以集成到 C++
+
+我建议先用 aubio。它是 C 库，可以直接编入 Nyx。
+
+3.4 输出格式
+cpp
+struct BeatmapLevel {
+    std::string audioPath;
+    double bpm;
+    double offset;          // 第一拍的偏移
+    std::vector<Beat> beats;
+};
+
+struct Beat {
+    double time;            // 秒
+    float strength;         // 0~1，强拍或弱拍
+    int type;               // 0 = 单点，1 = 连击
+};
+3.5 目标生成规则
+从 Beatmap 生成目标序列。
+
+拍强度	目标数量	移动模式	大小
+强拍	1~3	Static	大
+中拍	1~2	Linear	中
+弱拍	1	SineWave	小
+无拍	0	-	-
+这样音乐强的地方目标多、简单；音乐弱的地方目标少、难。
+
+3.6 玩家自定义
+玩家可以导入自己的音乐
+
+编曲器自动生成 Beatmap
+
+玩家可以手动调整（编辑器模式）
+
+4. 玩法系统
+4.1 核心循环
+纯训练模式：
+
+text
+目标出现 → 瞄准 → 射击 → 命中 → 得分
+节奏模式：
+
+text
+音乐播放 → 节拍 → 目标出现 → 瞄准 → 射击 → 时机判定 → 得分
+4.2 计分系统
+训练模式：
+
+每命中一个目标 +1
+
+无时间限制
+
+节奏模式：
+
+命中时机判定（Perfect / Great / Good / Bad）
+
+连击加成（Combo）
+
+最终评分（S / A / B / C / D）
+
+4.3 统计面板
+通用统计：
+
+平均反应时间
+
+命中率
+
+每秒射击数
+
+节奏模式独有：
+
+平均时机偏差
+
+Perfect 率
+
+最大连击
+
+5. 与 NyxEngine 的关系
+5.1 使用的引擎模块
+模块	用途
+Renderer	主渲染
+InputSystem	鼠标键盘输入
+LightingSystem	光照
+AudioSystem	音乐播放 + 节拍同步
+ResourceManager	目标模型、音效
+EditorPanel	编辑器
+EngineConfig	配置
+NyxMath	数学
+JsonValue	Beatmap 存储
+5.2 应用层结构
+text
+Game/
+├── Noriko/
+│   ├── NorikoGame.h/.cpp        # 主游戏类
+│   ├── TargetManager.h/.cpp     # 目标管理（继承训练器）
+│   ├── BeatmapLoader.h/.cpp     # Beatmap 加载
+│   ├── BeatmapGenerator.h/.cpp  # 自动化编曲器
+│   ├── RhythmScoring.h/.cpp     # 节奏评分
+│   └── NorikoConfig.h           # 游戏配置
+5.3 场景设计
+训练模式：和现有训练器一样（一个房间，9 个球体目标）。
+
+节奏模式：类似的场景，但目标按节拍出现。
+
+6. 视觉规范
+6.1 风格定位
+保持训练器的视觉身份：偏 CS2，干净、克制、目标清晰。
+
+节奏模式增强：
+
+目标按节拍闪烁
+
+命中时有视觉反馈（光晕、粒子）
+
+连击时屏幕边缘有颜色脉动
+
+不干扰瞄准
+
+6.2 颜色规范
+颜色	色值	用途
+黑	#0D0E11	背景
+天蓝	#4FC3F7	准星、目标
+纯白	#F5F7FA	文字
+粉	#D98FA8	节奏模式高亮
+紫	#A88FD9	连击加成
+7. 开发路线
+阶段 A：训练器保留（当前）
+保留训练器所有能力
+
+改名 Noriko
+
+优化性能
+
+阶段 B：PrismSpectra
+材质光学质感
+
+视觉身份完成
+
+阶段 C：音频系统
+miniaudio 集成
+
+基础音效（命中音、换弹音）
+
+音乐播放
+
+阶段 D：节奏模式
+Beatmap 格式
+
+节拍检测
+
+目标按节拍生成
+
+评分系统
+
+阶段 E：自动化编曲器
+aubio 集成
+
+从音频生成 Beatmap
+
+编辑器手动调整
+
+阶段 F：打磨 + 发布
+关卡设计
+
+用户测试
+
+打包发布
+
+8. 技术验证点
+节拍检测准确率 ≥ 85%
+
+音乐播放延迟 < 20ms
+
+目标生成与音乐同步误差 < 30ms
+
+节奏模式帧率 ≥ 500 FPS
+
+玩家导入音乐流程顺畅
+
+9. 和 Nova 的关系
+Noriko 是 Nova 的训练场。
+
+Noriko 会验证：
+
+音频系统（Nova 需要空间音频）
+
+低延迟（Nova 需要）
+
+打包发布（Nova 需要）
+
+用户反馈（指导后续开发）
+
+Noriko 发布之后，Nova 才启动。
+
+10. 一句话总结
+Noriko 是训练器 + 音游。它保留训练器的所有能力，叠加音乐节拍，用自动化编曲器让玩家用自己的音乐训练枪法。它是 NokaNod 的第一个完整产品。
+
+文档状态： 定位明确，待开发
+最后更新： 2026-09-13
+下一步： PrismSpectra → 音频系统 → 节奏模式
+
+接下来是 Nova 的开发文档。
+
+Nova 开发文档
+版本 2.0.0
+状态：概念确定，架构方向明确
+最后更新：2026-09-13
+
+1. 项目定位
+Nova 是一款基于 NyxEngine 的球体地球模拟器级别游戏。玩家作为一个可交互实体，在真实的球体地球上自由行动、探索、战斗、交易、体验。
+
+Nova 的核心不是任务、不是剧情、不是关卡。地球本身就是内容。
+
+1.1 一句话定义
+一个在真实球体地球上的、第一人称步行优先的、高自由度、体验为主的巨型 RPG。它不是地球的复刻，是"地球感的星球"。
+
+1.2 命名演进
+阶段	名字	说明
+原	Terra	项目代号
+现	Nova	正式名称
+未来	Nova + 扩展	F1、勒芒、环法、帆船、飞行
+1.3 核心特征
+特征	说明
+球体地球	完整球体模型，无地图边界
+程序化重建	不追求 1:1 复刻，追求整体正确、局部可控
+步行优先	核心体验是第一人称步行、跑酷、战斗
+多载具预留	架构支持帆船、飞行、地面载具
+自洽模拟	全球气象、洋流、昼夜、季节系统
+体验为主	非沙盒，地形不可修改，玩家是世界过客
+高自由度 RPG	角色成长、技能、经济，无强制任务
+完全 PvP	玩家可自由攻击，规则由服务器配置决定
+多人预留	单机优先，架构为几百人同时在线准备
+1.4 非目标
+政治系统
+
+玩家间市场
+
+地形修改 / 建造 / 破坏
+
+关卡编辑器
+
+剧情 / 对话 / 任务文本
+
+顶级画质（不追求 3A，追求极致优化）
+
+1.5 早期策略
+早期 Nova = Terra 不变。
+
+后期扩展（F1、勒芒、环法）是几年后的事，不影响早期开发。
+
+2. 与 NyxEngine 的关系
+2.1 引擎模块化
+NyxEngine 为 Nova 提供：
+
+渲染 / 输入 / 光照 / 音频
+
+配置 / 编辑器 / 资源
+
+日志 / 内存 / 数学 / 文件 / 事件 / 线程
+
+Nova 特有模块（编译可选）：
+
+ECEF 坐标系统
+
+地形系统
+
+物件系统
+
+流式加载
+
+球面大气散射
+
+气象模拟
+
+WorldState
+
+网络
+
+2.2 开发顺序
+先把 Noriko 做到能发布
+
+在 Noriko 开发中，为 Nova 预留架构口子
+
+Noriko 发布后，开始 Nova 技术预研
+
+Nova 第一章（全球地形 + 自由相机）
+
+Nova 完整版
+
+3. 球体地球基础
+3.1 坐标系统：ECEF
+采用 ECEF（Earth-Centered, Earth-Fixed）坐标系。
+
+原点在地心
+
+Z 轴指向北极
+
+X 轴指向本初子午线
+
+所有世界坐标用 double（64 位） 存储
+
+渲染时：相机位置附近的局部原点从所有坐标中减去。
+
+重力方向：-normalize(位置)（朝地心方向）。
+
+为什么这是唯一正确方案：平面坐标模拟球体会在所有尺度出现问题。
+
+3.2 地形分层：球面起伏 + 表面物体
+Nova 的世界拆成两层：
+
+第一层：球面起伏（地表）
+
+连续场：f(lat, lon) → height
+
+唯一的、全局的、不可拆分的
+
+第二层：表面物体（物件）
+
+离散实体：树、建筑、机场
+
+可增删、可替换、可独立编辑
+
+这两层的差异，决定了它们必须用两套系统处理。
+
+3.3 地形数据：程序化重建
+Nova 不追求 1:1 复刻真实地球，追求"整体正确、局部可控"。
+
+数据源：
+
+数据	来源	大小
+海岸线	Natural Earth 1:110m	几 MB
+高程分区	ETOPO1（1.8km）	~100MB 压缩
+关键特征	手动标注	几 KB
+处理流程：
+
+text
+真实数据 → 关键特征提取 → 参数化建模 → 程序化细分 → 可调参数 → 最终地形
+保留什么，放弃什么：
+
+保留	放弃
+七大洲轮廓	城市细节
+喜马拉雅高度	街道走向
+马里亚纳深度	具体建筑
+气象与洋流	河道细节
+3.4 地形生成规则
+类型	生成规则	海拔范围
+高山	脊线 + 分形噪声	2000~8000m
+丘陵	平滑噪声	200~1000m
+平原	极低噪声	0~200m
+高原	平顶 + 边缘峭壁	1000~4000m
+大陆架	缓坡	-200~0m
+海洋平原	平坦	-3000~-5000m
+海沟	狭长深槽	-6000~-11000m
+3.5 物件层设计
+四种类型：
+
+类型	例子	数据来源	实现方式
+自然散布	树、草、石头	程序化分布	实例化渲染
+线状设施	道路、河流、电线	样条曲线	沿线生成
+面状区域	森林、农田、城区	多边形区域	区域内分布
+点状设施	建筑、机场、港口	单独放置	独立模型
+3.6 分层手工策略
+层级	内容	工作量	覆盖范围
+A 级景点	手工精修的城市	1~2 个月/城	1~5 个
+B 级区域	手工调整的周边	2~3 周/区	5~10 个
+C 级背景	程序化生成	0（自动）	全球
+D 级远景	简化表现	0（自动）	全球
+程序化给你"世界很大"，手工给你"我记得这里"。
+
+未来可以引入玩家投稿：提供编辑器，玩家布置城市，官方审核后加入正式版本。
+
+3.7 球面物件的放置
+核心原理：局部切平面。
+
+球面上任意一点 P 有局部坐标系：
+
+text
+Up    = normalize(P)
+North = (0, 0, 1) 的切向分量
+East  = cross(North, Up)
+物件存储：
+
+cpp
+struct Placement {
+    glm::dvec3 ecefPosition;
+    float yaw;
+    float scale;
+    uint32_t modelId;
+};
+建筑是直的，道路是分段的，地面是连续的。
+
+建筑：50 米宽的曲率偏差 < 0.05 毫米，无需弯曲
+
+道路：每 100~500 米一段，形成测地线
+
+地面：由地形生成器提供的连续高度场
+
+4. 流式加载系统
+4.1 两级加载
+弱加载（背景层）：低精度地形 + 区域元数据 + 状态流缓存
+强加载（前景层）：高精度地形 + 植被 + 建筑 + 精细碰撞
+
+4.2 加载半径（按载具）
+载具	强加载	弱加载
+步行	500m	5km
+帆船	2~5km	50km
+飞机	20~50km	200km
+4.3 参考实现
+Minecraft 区块加载
+
+Cesium 3D Tiles
+
+微软飞行模拟
+
+5. 大气与天空系统
+5.1 分层设计
+层级	内容	优先级
+L0	大气散射（Rayleigh + Mie）	必须
+L1	高层云（卷云）	高
+L2	中层云（层积云）	中
+L3	低层云（积雨云）	中
+L4	极光	低
+L5	降水（雨、雪、冰雹）	中
+L6	闪电事件	低
+5.2 程序化天空
+非贴图、非建模。 所有天空元素由程序生成。
+
+噪声源：预计算 2D/3D 噪声纹理。
+
+5.3 球面大气散射
+方案：球形大气模型，光线穿过大气时按物理路径积分。
+
+起步：Preetham 或 Hosek-Wilkie 解析模型。
+未来：屏幕空间 raymarching。
+
+5.4 昼夜与季节
+太阳方向随经纬度、日期、时间变化
+
+采用真实天文公式
+
+极昼极夜在极地正确出现
+
+季节影响全球太阳辐射分布
+
+6. 气象模拟
+6.1 设计目标
+模拟的深度由玩家决策需要决定，而非画面需要。
+
+6.2 分层架构
+Layer 0：全球气象场（服务器/离线计算）
+
+网格分辨率：1° × 1°
+
+更新频率：每 10 分钟至 1 小时
+
+数据：风速、风向、气压、温度、湿度
+
+模型：简化大气环流
+
+Layer 1：区域天气（客户端）
+
+根据全球场插值出局部天气
+
+加入地形影响（山谷风、海陆风）
+
+决定降水、云量、能见度
+
+Layer 2：局部效果（客户端）
+
+雨滴、雪花、闪电等视觉表现
+
+6.3 洋流
+类似气象，但针对海洋
+
+影响帆船航行
+
+影响海洋温度，进而影响气象
+
+6.4 与玩法耦合
+帆船航行：读全球风场，规划航线，考虑季节、信风带、洋流。
+
+飞行：读气流、云层。
+
+步行：读局部天气。
+
+7. 玩法系统
+7.1 核心循环
+text
+玩家在世界中自由行动 → 观察环境 → 做出决策 → 执行行动 → 获得反馈 → 回到观察
+没有强制任务。 地球本身就是目标。
+
+7.2 角色系统
+等级：缓慢成长，基于行为。
+技能（参考《逃离塔科夫》）：按使用频率自然成长。
+装备（参考《猎杀对决》）：玩家与 NPC 交易，有损失感。
+
+7.3 战斗系统
+第一人称射击，手感参考塔科夫。
+
+起步：3~5 种武器
+
+深度优先于广度：同一把枪有 10~20 个改装件
+
+弹道、后坐力、风偏、下坠真实模拟
+
+子弹规则：子弹只在加载范围内存在；超出后消失；玩家可互相攻击；攻击规则由服务器配置决定。
+
+7.4 载具系统
+原则：要么全做，要么不做。
+
+架构预留：帆船、飞行、地面载具。
+
+实现顺序：步行优先。
+
+7.5 经济系统
+第一版：直接买卖（参考《猎杀对决》）。
+未来：可考虑动态价格、区域差异。
+
+8. WorldState 架构
+8.1 核心概念
+WorldState 是 Nova 所有游戏状态的唯一容器。
+
+8.2 单机模式
+text
+Input → GameLogic → WorldState → Renderer
+8.3 多人模式（未来）
+text
+Input → GameLogic → WorldState → Renderer
+                     ↓
+                  NetworkSync → Server
+8.4 WorldState 内容
+玩家实体
+
+世界实体（NPC、载具）
+
+环境状态（时间、天气）
+
+交互事件（交易、聊天、战斗）
+
+8.5 设计原则
+单一权威来源
+
+唯一 ID
+
+时间确定
+
+随机种子
+
+9. 网络架构
+9.1 定位
+单机优先：第一版纯单机
+
+多人预留：架构为几百人同时在线准备
+
+服务器轻量：模拟主要在客户端
+
+9.2 服务器职责
+玩家位置同步
+
+持久化状态
+
+全局事件广播
+
+气象场计算与分发
+
+攻击规则配置
+
+9.3 同步策略
+玩家位置：高频同步
+
+世界状态：低频同步
+
+气象场：定期拉取
+
+9.4 子弹与攻击规则
+子弹只在加载范围内存在
+
+攻击规则由服务器配置文件决定
+
+支持"和平区"、"战区"、"自定义规则"
+
+10. 第一章：第一个可玩版本
+10.1 定义
+"作品的第一章"，不是技术 demo。
+
+目标：第一次看到地球时，感觉对了。
+
+10.2 范围
+必须有：
+
+全球 1km 分辨率地形（程序化重建）
+
+流式加载系统
+
+自由相机
+
+ECEF 大坐标系统
+
+球面大气散射
+
+基础水面
+
+昼夜循环
+
+可以没有：
+
+物件层
+
+材质细节
+
+载具
+
+玩家角色
+
+天气系统
+
+多人
+
+10.3 成功标准
+玩家截图发朋友圈
+
+帧率稳定 60+
+
+从太空到地面的过渡流畅无卡顿
+
+大气散射在三种视角下视觉一致
+
+10.4 技术验证点
+Natural Earth + ETOPO1 数据能否正确提取
+
+程序化地形生成是否可控
+
+ECEF 坐标是否解决抖动
+
+球面大气散射在三种视角下是否正确
+
+长时间飞行（跨大陆）是否稳定
+
+内存占用是否可控
+
+11. 路线图
+阶段 A：Noriko 完成 + 发布（当前）
+PrismSpectra
+
+音频系统
+
+Noriko 节奏模式
+
+打包发布
+
+阶段 B：Nova 技术预研
+Natural Earth + ETOPO1 数据处理
+
+程序化地形生成器原型
+
+ECEF 坐标系统验证
+
+球面大气散射原型
+
+阶段 C：Nova 第一章
+全球 1km 地形
+
+自由相机
+
+ECEF 坐标系统
+
+球面大气散射
+
+基础水面
+
+阶段 D：Nova 物件层
+森林、草地程序化散布
+
+道路、河流样条生成
+
+城市、村庄程序化生成
+
+A 级景点手工精修
+
+阶段 E：Nova 可玩版本
+步行系统 + 跑酷
+
+射击
+
+完整气象系统
+
+经济系统
+
+技能系统
+
+音频系统
+
+WorldState 落地
+
+阶段 F：多人模式
+网络架构
+
+服务器
+
+同步机制
+
+攻击规则配置
+
+阶段 G：后期扩展（多年后）
+F1 / 勒芒
+
+环法骑行
+
+无动力帆船
+
+飞行模拟
+
+融合各种大场景游戏需求
+
+12. 开放问题
+地形生成算法：分形噪声 vs 侵蚀模拟 vs 混合
+
+物件生成规则：每种类型的具体分布算法
+
+第一章的起点：太空、高空、地面、还是具体城市？
+
+载具优先级：帆船、飞行、地面，先做哪个？
+
+玩家角色：有无角色模型？有无动画系统？
+
+NPC 系统：有无 NPC？AI 复杂度？
+
+球面瓦片的具体方案：Cube Sphere vs S2 Geometry？
+
+气象模型：简化的程度和具体算法
+
+13. 工程哲学
+沿用 NyxEngine 的核心原则：
+
+C++ 但 C 风格
+
+禁用异常、RTTI
+
+配置驱动
+
+专用而非通用
+
+克制：不做不需要的功能
+
+模块化：按需启用，互不拖累
+
+架构先行：ECEF、WorldState、分层地形从一开始就对
+
+Nova 特有原则：
+
+程序化优先：能用程序生成的，不手工做
+
+手工点睛：只在关键位置手工精修
+
+整体正确：不追求局部细节，追求全球尺度正确
+
+可控可调：每个区域、每个物件都有参数
+
+接口解耦：系统之间通过稳定接口通信
+
+14. 一句话总结
+Nova 是一个在真实球体地球上的、第一人称步行优先的、高自由度、体验为主的巨型 RPG。它采用程序化重建而非数据复刻，把世界拆成球面起伏和表面物体两层，用分层手工策略平衡效率和质量。它是 NokaNod 的最终愿景。
+
+文档状态： 概念确定，架构方向明确
+最后更新： 2026-09-13
+下一步： 完成 Noriko，开始 Nova 技术预研
