@@ -72,6 +72,14 @@ set(NYX_ENGINE_SOURCES
 
     # World
     NyxEngine/World/Player.cpp
+
+    # Physics
+    NyxEngine/Physics/Shapes/SphereShape.cpp
+    NyxEngine/Physics/Shapes/CapsuleShape.cpp
+    NyxEngine/Physics/Shapes/BoxShape.cpp
+    NyxEngine/Physics/Broadphase/BruteForceBroadphase.cpp   # ← 新增
+    NyxEngine/Physics/Narrowphase/Narrowphase.cpp   # ← 新增
+    NyxEngine/Physics/PhysicsWorld.cpp                # ← 新增
 )
 
 # ============================================================
