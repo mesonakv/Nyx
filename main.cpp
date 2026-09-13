@@ -217,7 +217,9 @@ int main(int argc, char* argv[]) {
     NYX_LOG_INFO("Working dir:    %s", FileSystem::GetWorkingDir().c_str());
 
     // ============ 引擎自测 ============
+#ifdef _DEBUG
     RunSelfTests();
+#endif
 
     // ============ 窗口 ============
     DisplaySettings displaySettings;

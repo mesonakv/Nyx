@@ -23,17 +23,11 @@ public:
     static void Shutdown();
 
     // ---------- 计时 ----------
-    // 返回当前时间（纳秒）。单调递增，不受系统时间调整影响
+    // 返回当前时间（纳秒）。单调递增，不受系统时间调整影响。
     static uint64_t GetTimerNanos();
 
-    // 返回计时器频率（每秒多少 tick）。用 GetTimerNanos 时是 10^9
-    static uint64_t GetTimerFrequency();
-
-    // 返回一个用于计时的当前 tick
-    static uint64_t GetTimerTick();
-
-    // 从 tick 转换为秒
-    static double TicksToSeconds(uint64_t ticks);
+    // 从纳秒转换为秒
+    static double TicksToSeconds(uint64_t nanos);
 
     // ---------- 睡眠 ----------
     static void SleepMs(uint32_t milliseconds);

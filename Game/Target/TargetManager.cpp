@@ -1,6 +1,15 @@
 #include "TargetManager.h"
 #include <cmath>
 
+namespace {
+constexpr float kTwoPi = 6.28318530718f;
+}
+
+float TargetManager::RandomAngle() {
+    std::uniform_real_distribution<float> dist(0.0f, kTwoPi);
+    return dist(rng_);
+}
+
 void TargetManager::Spawn() {
     targets.clear();
     const float spacing = 1.5f;
@@ -10,7 +19,7 @@ void TargetManager::Spawn() {
         Target t;
         t.position = glm::vec3((col - 1) * spacing, (1 - row) * spacing, 0.0f);
         t.initialPosition = t.position;
-        t.phase = (float)(rand() % 628) / 100.0f;   // 随机相位 0..2π
+        t.phase = RandomAngle();
         t.scale = 0.6f;
         t.alive = true;
         t.materialIndex = currentMaterialIndex;
@@ -49,7 +58,7 @@ void TargetManager::Update(float dt) {
         randomTimer -= dt;
         if (randomTimer <= 0.0f) {
             randomTimer = randomChangeInterval;
-            float angle = (float)(rand() % 628) / 100.0f;
+            float angle = RandomAngle();
             randomDir = glm::vec3(cos(angle), 0.0f, sin(angle));
         }
         for (auto& t : targets) {
@@ -78,7 +87,6 @@ void TargetManager::Shoot(glm::vec3 cameraPos, glm::vec3 direction) {
     }
 }
 
-// A3: 重建内部缓存，返回引用
 const std::vector<glm::vec3>& TargetManager::GetAlivePositions() const {
     alivePositionsCache_.clear();
     for (const auto& t : targets) {
@@ -95,10 +103,10 @@ const std::vector<float>& TargetManager::GetAliveScales() const {
     return aliveScalesCache_;
 }
 
-std::vector<int> TargetManager::GetAliveMaterialIndices() const {
-    std::vector<int> indices;
-    for (auto& t : targets) {
-        if (t.alive) indices.push_back(t.materialIndex);
+const std::vector<int>& TargetManager::GetAliveMaterialIndices() const {
+    aliveMaterialIndicesCache_.clear();
+    for (const auto& t : targets) {
+        if (t.alive) aliveMaterialIndicesCache_.push_back(t.materialIndex);
     }
-    return indices;
+    return aliveMaterialIndicesCache_;
 }

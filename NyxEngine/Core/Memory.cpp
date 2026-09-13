@@ -9,6 +9,9 @@ namespace {
 
 // ============ 分配 header ============
 // 32 字节，保证 16 字节对齐（满足 max_align_t 要求）
+//
+// TODO: 如果以后要用 SIMD 类型（__m256 需要 32 字节对齐），
+//       header 需要扩展到 64 字节，或者用 aligned_alloc + 手动偏移。
 
 struct AllocationHeader {
     size_t size;        // 8
@@ -84,15 +87,18 @@ void Memory::Shutdown() {
 }
 
 void* Memory::Allocate(size_t size, const char* tag, const char* file, int line) {
-    if (size == 0) return nullptr;
+    // C++ 的 new 语义：size=0 也要返回一个有效且可释放的指针。
+    // malloc(0) 的行为是实现定义的，可能返回 nullptr。
+    // 为了让 NYX_NEW 之类的宏行为一致，size=0 时分配 1 字节。
+    size_t actualSize = (size == 0) ? 1 : size;
 
-    void* raw = std::malloc(kHeaderSize + size);
+    void* raw = std::malloc(kHeaderSize + actualSize);
     if (!raw) {
-        NYX_LOG_FATAL("Memory: malloc failed for %zu bytes", size);
+        NYX_LOG_FATAL("Memory: malloc failed for %zu bytes", actualSize);
     }
 
     AllocationHeader* header = (AllocationHeader*)raw;
-    header->size = size;
+    header->size = actualSize;
     header->tag = tag;
     header->file = file;
     header->line = line;
@@ -103,7 +109,7 @@ void* Memory::Allocate(size_t size, const char* tag, const char* file, int line)
     MemoryState& state = GetState();
     std::lock_guard<std::mutex> lock(state.mutex);
 
-    state.totalAllocated += size;
+    state.totalAllocated += actualSize;
     if (state.totalAllocated > state.peakAllocated) {
         state.peakAllocated = state.totalAllocated;
     }

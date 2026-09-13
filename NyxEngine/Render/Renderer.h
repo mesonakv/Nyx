@@ -12,6 +12,37 @@ class Renderer {
 public:
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
+    void Initialize(VulkanContext& ctx, SDL_Window* window);
+    void RecreatePipeline(VulkanContext& ctx);
+    void DrawFrame(VulkanContext& ctx, const FrameData& frame);
+    void Cleanup(VulkanContext& ctx);
+
+private:
+    // ---------- 初始化步骤 ----------
+    void CreateBallMesh(VulkanContext& ctx);
+    void CreateCrosshairMesh(VulkanContext& ctx);
+    void CreateGroundMesh(VulkanContext& ctx);
+    void CreateShadowMesh(VulkanContext& ctx);
+    void CreateSkyMesh(VulkanContext& ctx);
+
+    void CreateDescriptorSetLayout(VulkanContext& ctx);
+    void CreateUniformBuffers(VulkanContext& ctx);
+    void CreateDescriptorPool(VulkanContext& ctx);
+    void CreateDescriptorSets(VulkanContext& ctx);
+    void DestroyUniformResources(VulkanContext& ctx);
+
+    void CreateGraphicsPipeline(VulkanContext& ctx);
+    void CreateSkyPipeline(VulkanContext& ctx);
+
+    void CreateSyncObjects(VulkanContext& ctx);
+    void DestroySyncObjects(VulkanContext& ctx);
+
+    void RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, const FrameData& frame);
+
+    void UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t vertexBytes,
+                        VkBuffer& outBuffer, VkDeviceMemory& outMemory);
+
+    // ---------- Vulkan 资源 ----------
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 
@@ -51,35 +82,4 @@ public:
 
     uint32_t currentFrame = 0;
     SDL_Window* window = nullptr;
-
-    void Initialize(VulkanContext& ctx, SDL_Window* window);
-    void CreateBallMesh(VulkanContext& ctx);
-    void CreateCrosshairMesh(VulkanContext& ctx);
-    void CreateGroundMesh(VulkanContext& ctx);
-    void CreateShadowMesh(VulkanContext& ctx);
-    void CreateSkyMesh(VulkanContext& ctx);
-
-    void CreateDescriptorSetLayout(VulkanContext& ctx);
-    void CreateUniformBuffers(VulkanContext& ctx);
-    void CreateDescriptorPool(VulkanContext& ctx);
-    void CreateDescriptorSets(VulkanContext& ctx);
-    void DestroyUniformResources(VulkanContext& ctx);
-
-    void CreateGraphicsPipeline(VulkanContext& ctx);
-    void CreateSkyPipeline(VulkanContext& ctx);
-    void RecreatePipeline(VulkanContext& ctx);
-
-    void CreateSyncObjects(VulkanContext& ctx);
-    void DestroySyncObjects(VulkanContext& ctx);
-
-    // D1: 参数收敛成 FrameData
-    void RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, const FrameData& frame);
-    void DrawFrame(VulkanContext& ctx, const FrameData& frame);
-
-    void Cleanup(VulkanContext& ctx);
-
-private:
-    // E2: 把顶点数据上传到 GPU，创建 buffer + memory
-    void UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t vertexBytes,
-                        VkBuffer& outBuffer, VkDeviceMemory& outMemory);
 };

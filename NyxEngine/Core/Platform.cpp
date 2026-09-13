@@ -39,26 +39,12 @@ void Platform::Shutdown() {
 // ============ 计时 ============
 
 uint64_t Platform::GetTimerNanos() {
-    // steady_clock 在不同平台上精度不同。
-    // 我们用它的 tick 数，配合 TicksToSeconds 转换。
-    // 大多数平台（Windows/macOS）tick 是 100ns；Linux 是 1ns。
-    // 为了接口稳定，我们返回 tick 数，由 TicksToSeconds 处理。
     auto now = Clock::now().time_since_epoch();
     return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
 }
 
-uint64_t Platform::GetTimerFrequency() {
-    // 用 nanoseconds 精度，所以频率是 10^9
-    return 1000000000ULL;
-}
-
-uint64_t Platform::GetTimerTick() {
-    auto now = Clock::now().time_since_epoch();
-    return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-}
-
-double Platform::TicksToSeconds(uint64_t ticks) {
-    return (double)ticks / (double)GetTimerFrequency();
+double Platform::TicksToSeconds(uint64_t nanos) {
+    return (double)nanos / 1.0e9;
 }
 
 // ============ 睡眠 ============

@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL.h>
+#include <cstdint>
 
 // ============ InputSystem ============
 //
@@ -10,10 +11,16 @@
 //   - 只提供"现在鼠标动了多少"、"这个键是不是按住"、"这个键本帧刚按下"这类查询
 //   - 每帧流程：BeginFrame() -> ProcessEvent() * N -> 使用 -> EndFrame()
 //
+// 输入不丢失保证：
+//   - keysDown_ 记录持续状态
+//   - keysPressedThisFrame_ / keysReleasedThisFrame_ 记录本帧的瞬时事件
+//   - 即便玩家在两次 PollEvent 之间完成按下+释放，这两个表也能正确记录
+//
 // 未来扩展：
 //   - 手柄输入
 //   - 灵敏度曲线
 //   - 按键映射
+//   - 输入时间戳（用于动作缓冲、音频对齐）
 
 class InputSystem {
 public:
@@ -21,9 +28,9 @@ public:
     void Shutdown();
 
     // 每帧调用
-    void BeginFrame();                        // 清空本帧临时状态（鼠标 delta）
+    void BeginFrame();                        // 清空本帧临时状态（鼠标 delta、pressed/released 表）
     void ProcessEvent(const SDL_Event& e);    // 处理单个 SDL 事件
-    void EndFrame();                          // 归档本帧状态，用于下一帧计算 pressed/released
+    void EndFrame();                          // 保留接口，当前为空
 
     // ---------- 鼠标 ----------
     float GetMouseDeltaX() const { return mouseDeltaX_; }
@@ -34,8 +41,8 @@ public:
 
     // ---------- 键盘 ----------
     bool IsKeyDown(SDL_Scancode key) const;       // 按住
-    bool WasKeyPressed(SDL_Scancode key) const;   // 本帧刚按下
-    bool WasKeyReleased(SDL_Scancode key) const;  // 本帧刚释放
+    bool WasKeyPressed(SDL_Scancode key) const;   // 本帧刚按下（不丢输入）
+    bool WasKeyReleased(SDL_Scancode key) const;  // 本帧刚释放（不丢输入）
 
     // ---------- 退出 ----------
     bool ShouldQuit() const { return quitRequested_; }
@@ -45,9 +52,10 @@ private:
 
     SDL_Window* window_ = nullptr;
 
-    // 键盘状态（每帧两张快照，用于计算 pressed/released）
-    bool keysDown_[kMaxKeys] = {};
-    bool keysDownLastFrame_[kMaxKeys] = {};
+    // 键盘状态
+    bool keysDown_[kMaxKeys] = {};              // 持续按住
+    bool keysPressedThisFrame_[kMaxKeys] = {};  // 本帧刚按下
+    bool keysReleasedThisFrame_[kMaxKeys] = {}; // 本帧刚释放
 
     // 鼠标
     float mouseDeltaX_ = 0.0f;

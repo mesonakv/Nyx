@@ -21,9 +21,6 @@ layout(push_constant) uniform PushConstants {
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragWorldPos;
-layout(location = 3) out float fragMetallic;
-layout(location = 4) out float fragRoughness;
-layout(location = 5) out float fragEmissive;
 
 void main() {
     vec4 worldPos = push.model * vec4(inPosition, 1.0);
@@ -42,7 +39,4 @@ void main() {
     fragNormal = mat3(push.model) * inNormal;
 
     fragColor = push.ballColor.rgb;
-    fragMetallic = push.material.x;
-    fragRoughness = push.material.y;
-    fragEmissive = push.material.z;
 }

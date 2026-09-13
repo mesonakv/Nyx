@@ -2,6 +2,16 @@
 #include "Logger.h"
 #include <algorithm>
 
+// ============ VkResult 检查宏 ============
+// 失败直接 FATAL，符合"要么成功要么死"的创建逻辑风格。
+#define NYX_VK_CHECK(expr, name) \
+    do { \
+        VkResult _nyx_r = (expr); \
+        if (_nyx_r != VK_SUCCESS) { \
+            NYX_LOG_FATAL("%s failed: %d", name, (int)_nyx_r); \
+        } \
+    } while (0)
+
 static void SetWindowFullscreen(SDL_Window* window, WindowMode mode) {
     switch (mode) {
     case WindowMode::Windowed:
@@ -48,12 +58,17 @@ void VulkanContext::Initialize(SDL_Window* window, const DisplaySettings& initia
     createInfo.pApplicationInfo = &appInfo;
     createInfo.enabledExtensionCount = extensionCount;
     createInfo.ppEnabledExtensionNames = extensions.data();
-    vkCreateInstance(&createInfo, nullptr, &instance);
+    NYX_VK_CHECK(vkCreateInstance(&createInfo, nullptr, &instance), "vkCreateInstance");
 
-    SDL_Vulkan_CreateSurface(window, instance, &surface);
+    if (!SDL_Vulkan_CreateSurface(window, instance, &surface)) {
+        NYX_LOG_FATAL("SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
+    }
 
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+    if (deviceCount == 0) {
+        NYX_LOG_FATAL("No Vulkan-capable physical device found");
+    }
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
     physicalDevice = devices[0];
@@ -72,6 +87,10 @@ void VulkanContext::Initialize(SDL_Window* window, const DisplaySettings& initia
         vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
         if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT && graphicsQueueFamily == -1) graphicsQueueFamily = i;
         if (presentSupport && presentQueueFamily == -1) presentQueueFamily = i;
+    }
+
+    if (graphicsQueueFamily == -1 || presentQueueFamily == -1) {
+        NYX_LOG_FATAL("Could not find graphics/present queue families");
     }
 
     std::vector<VkDeviceQueueCreateInfo> queueInfos;
@@ -95,7 +114,7 @@ void VulkanContext::Initialize(SDL_Window* window, const DisplaySettings& initia
     dci.pQueueCreateInfos = queueInfos.data();
     dci.enabledExtensionCount = 1;
     dci.ppEnabledExtensionNames = deviceExtensions;
-    vkCreateDevice(physicalDevice, &dci, nullptr, &device);
+    NYX_VK_CHECK(vkCreateDevice(physicalDevice, &dci, nullptr, &device), "vkCreateDevice");
     vkGetDeviceQueue(device, graphicsQueueFamily, 0, &graphicsQueue);
     vkGetDeviceQueue(device, presentQueueFamily, 0, &presentQueue);
 
@@ -103,7 +122,7 @@ void VulkanContext::Initialize(SDL_Window* window, const DisplaySettings& initia
     pi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pi.queueFamilyIndex = graphicsQueueFamily;
     pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    vkCreateCommandPool(device, &pi, nullptr, &commandPool);
+    NYX_VK_CHECK(vkCreateCommandPool(device, &pi, nullptr, &commandPool), "vkCreateCommandPool");
 
     RecreateSwapchain(window);
 }
@@ -117,7 +136,6 @@ void VulkanContext::UpdateWindowMode(SDL_Window* window, WindowMode mode) {
 void VulkanContext::DestroySwapchainResources() {
     vkDeviceWaitIdle(device);
 
-    // 命令缓冲依赖 swapchain image 数量，必须在这里释放
     if (!commandBuffers.empty()) {
         vkFreeCommandBuffers(device, commandPool,
             (uint32_t)commandBuffers.size(), commandBuffers.data());
@@ -209,9 +227,6 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 
-    // C1: 查询支持的 present mode，按优先级选
-    // Vsync 开启：优先 FIFO（有垂直同步）
-    // Vsync 关闭：优先 IMMEDIATE（无等待、无撕裂控制），退化到 MAILBOX，再退化到 FIFO
     uint32_t presentModeCount = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
@@ -222,10 +237,9 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
         return false;
     };
 
-    VkPresentModeKHR chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;  // 保底，规范保证支持
+    VkPresentModeKHR chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
 
     if (settings.vsync) {
-        // 有垂直同步，FIFO 是标准选择
         chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
     } else {
         if (hasPresentMode(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
@@ -245,9 +259,7 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
 
     sci.clipped = VK_TRUE;
 
-    if (vkCreateSwapchainKHR(device, &sci, nullptr, &swapchain) != VK_SUCCESS) {
-        NYX_LOG_FATAL("Failed to create swapchain");
-    }
+    NYX_VK_CHECK(vkCreateSwapchainKHR(device, &sci, nullptr, &swapchain), "vkCreateSwapchainKHR");
 
     uint32_t scImageCount = 0;
     vkGetSwapchainImagesKHR(device, swapchain, &scImageCount, nullptr);
@@ -266,47 +278,50 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
         vi.subresourceRange.levelCount = 1;
         vi.subresourceRange.baseArrayLayer = 0;
         vi.subresourceRange.layerCount = 1;
-        vkCreateImageView(device, &vi, nullptr, &swapchainImageViews[i]);
+        NYX_VK_CHECK(vkCreateImageView(device, &vi, nullptr, &swapchainImageViews[i]), "vkCreateImageView(swapchain)");
     }
 
     VkSampleCountFlagBits msaaSamples = GetMSAASamples();
+    const bool useMsaa = (msaaSamples != VK_SAMPLE_COUNT_1_BIT);
 
-    VkImageCreateInfo msaaInfo = {};
-    msaaInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    msaaInfo.imageType = VK_IMAGE_TYPE_2D;
-    msaaInfo.extent.width = swapchainExtent.width;
-    msaaInfo.extent.height = swapchainExtent.height;
-    msaaInfo.extent.depth = 1;
-    msaaInfo.mipLevels = 1;
-    msaaInfo.arrayLayers = 1;
-    msaaInfo.format = swapchainFormat;
-    msaaInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    msaaInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    msaaInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
-    msaaInfo.samples = msaaSamples;
-    msaaInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    vkCreateImage(device, &msaaInfo, nullptr, &msaaColorImage);
+    if (useMsaa) {
+        VkImageCreateInfo msaaInfo = {};
+        msaaInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        msaaInfo.imageType = VK_IMAGE_TYPE_2D;
+        msaaInfo.extent.width = swapchainExtent.width;
+        msaaInfo.extent.height = swapchainExtent.height;
+        msaaInfo.extent.depth = 1;
+        msaaInfo.mipLevels = 1;
+        msaaInfo.arrayLayers = 1;
+        msaaInfo.format = swapchainFormat;
+        msaaInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        msaaInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        msaaInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        msaaInfo.samples = msaaSamples;
+        msaaInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        NYX_VK_CHECK(vkCreateImage(device, &msaaInfo, nullptr, &msaaColorImage), "vkCreateImage(msaa)");
 
-    VkMemoryRequirements msaaMemReqs;
-    vkGetImageMemoryRequirements(device, msaaColorImage, &msaaMemReqs);
-    VkMemoryAllocateInfo msaaAlloc = {};
-    msaaAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    msaaAlloc.allocationSize = msaaMemReqs.size;
-    msaaAlloc.memoryTypeIndex = FindMemoryType(msaaMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    vkAllocateMemory(device, &msaaAlloc, nullptr, &msaaColorImageMemory);
-    vkBindImageMemory(device, msaaColorImage, msaaColorImageMemory, 0);
+        VkMemoryRequirements msaaMemReqs;
+        vkGetImageMemoryRequirements(device, msaaColorImage, &msaaMemReqs);
+        VkMemoryAllocateInfo msaaAlloc = {};
+        msaaAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        msaaAlloc.allocationSize = msaaMemReqs.size;
+        msaaAlloc.memoryTypeIndex = FindMemoryType(msaaMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        NYX_VK_CHECK(vkAllocateMemory(device, &msaaAlloc, nullptr, &msaaColorImageMemory), "vkAllocateMemory(msaa)");
+        NYX_VK_CHECK(vkBindImageMemory(device, msaaColorImage, msaaColorImageMemory, 0), "vkBindImageMemory(msaa)");
 
-    VkImageViewCreateInfo msaaViewInfo = {};
-    msaaViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    msaaViewInfo.image = msaaColorImage;
-    msaaViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    msaaViewInfo.format = swapchainFormat;
-    msaaViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    msaaViewInfo.subresourceRange.baseMipLevel = 0;
-    msaaViewInfo.subresourceRange.levelCount = 1;
-    msaaViewInfo.subresourceRange.baseArrayLayer = 0;
-    msaaViewInfo.subresourceRange.layerCount = 1;
-    vkCreateImageView(device, &msaaViewInfo, nullptr, &msaaColorImageView);
+        VkImageViewCreateInfo msaaViewInfo = {};
+        msaaViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        msaaViewInfo.image = msaaColorImage;
+        msaaViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        msaaViewInfo.format = swapchainFormat;
+        msaaViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        msaaViewInfo.subresourceRange.baseMipLevel = 0;
+        msaaViewInfo.subresourceRange.levelCount = 1;
+        msaaViewInfo.subresourceRange.baseArrayLayer = 0;
+        msaaViewInfo.subresourceRange.layerCount = 1;
+        NYX_VK_CHECK(vkCreateImageView(device, &msaaViewInfo, nullptr, &msaaColorImageView), "vkCreateImageView(msaa)");
+    }
 
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
     VkImageCreateInfo depthInfo = {};
@@ -323,7 +338,7 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     depthInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     depthInfo.samples = msaaSamples;
     depthInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    vkCreateImage(device, &depthInfo, nullptr, &depthImage);
+    NYX_VK_CHECK(vkCreateImage(device, &depthInfo, nullptr, &depthImage), "vkCreateImage(depth)");
 
     VkMemoryRequirements depthMemReqs;
     vkGetImageMemoryRequirements(device, depthImage, &depthMemReqs);
@@ -331,8 +346,8 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     depthAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     depthAlloc.allocationSize = depthMemReqs.size;
     depthAlloc.memoryTypeIndex = FindMemoryType(depthMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    vkAllocateMemory(device, &depthAlloc, nullptr, &depthImageMemory);
-    vkBindImageMemory(device, depthImage, depthImageMemory, 0);
+    NYX_VK_CHECK(vkAllocateMemory(device, &depthAlloc, nullptr, &depthImageMemory), "vkAllocateMemory(depth)");
+    NYX_VK_CHECK(vkBindImageMemory(device, depthImage, depthImageMemory, 0), "vkBindImageMemory(depth)");
 
     VkImageViewCreateInfo depthViewInfo = {};
     depthViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -344,17 +359,21 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     depthViewInfo.subresourceRange.levelCount = 1;
     depthViewInfo.subresourceRange.baseArrayLayer = 0;
     depthViewInfo.subresourceRange.layerCount = 1;
-    vkCreateImageView(device, &depthViewInfo, nullptr, &depthImageView);
+    NYX_VK_CHECK(vkCreateImageView(device, &depthViewInfo, nullptr, &depthImageView), "vkCreateImageView(depth)");
+
+    // ============ Render pass ============
 
     VkAttachmentDescription colorAttachment = {};
     colorAttachment.format = swapchainFormat;
     colorAttachment.samples = msaaSamples;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.storeOp = useMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE
+                                      : VK_ATTACHMENT_STORE_OP_STORE;
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.finalLayout = useMsaa ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                          : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentDescription depthAttachment = {};
     depthAttachment.format = depthFormat;
@@ -366,16 +385,6 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentDescription resolveAttachment = {};
-    resolveAttachment.format = swapchainFormat;
-    resolveAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    resolveAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    resolveAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    resolveAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    resolveAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    resolveAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    resolveAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
     VkAttachmentReference colorRef = {};
     colorRef.attachment = 0;
     colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -384,18 +393,34 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     depthRef.attachment = 1;
     depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+    VkAttachmentDescription resolveAttachment = {};
     VkAttachmentReference resolveRef = {};
-    resolveRef.attachment = 2;
-    resolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    std::vector<VkAttachmentDescription> attachments;
+
+    if (useMsaa) {
+        resolveAttachment.format = swapchainFormat;
+        resolveAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        resolveAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolveAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        resolveAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolveAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        resolveAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        resolveAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        resolveRef.attachment = 2;
+        resolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        attachments = { colorAttachment, depthAttachment, resolveAttachment };
+    } else {
+        attachments = { colorAttachment, depthAttachment };
+    }
 
     VkSubpassDescription subpass = {};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorRef;
-    subpass.pResolveAttachments = &resolveRef;
     subpass.pDepthStencilAttachment = &depthRef;
-
-    std::vector<VkAttachmentDescription> attachments = {colorAttachment, depthAttachment, resolveAttachment};
+    subpass.pResolveAttachments = useMsaa ? &resolveRef : nullptr;
 
     VkRenderPassCreateInfo rpi = {};
     rpi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -403,25 +428,39 @@ void VulkanContext::RecreateSwapchain(SDL_Window* window) {
     rpi.pAttachments = attachments.data();
     rpi.subpassCount = 1;
     rpi.pSubpasses = &subpass;
-    vkCreateRenderPass(device, &rpi, nullptr, &renderPass);
+    NYX_VK_CHECK(vkCreateRenderPass(device, &rpi, nullptr, &renderPass), "vkCreateRenderPass");
 
     framebuffers.resize(swapchainImageViews.size());
     for (size_t i = 0; i < swapchainImageViews.size(); i++) {
-        VkImageView fbAttachments[] = {msaaColorImageView, depthImageView, swapchainImageViews[i]};
+        VkImageView fbAttachments[3];
+        uint32_t attachmentCount = 0;
+
+        if (useMsaa) {
+            fbAttachments[0] = msaaColorImageView;
+            fbAttachments[1] = depthImageView;
+            fbAttachments[2] = swapchainImageViews[i];
+            attachmentCount = 3;
+        } else {
+            fbAttachments[0] = swapchainImageViews[i];
+            fbAttachments[1] = depthImageView;
+            attachmentCount = 2;
+        }
+
         VkFramebufferCreateInfo fi = {};
         fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fi.renderPass = renderPass;
-        fi.attachmentCount = 3;
+        fi.attachmentCount = attachmentCount;
         fi.pAttachments = fbAttachments;
         fi.width = swapchainExtent.width;
         fi.height = swapchainExtent.height;
         fi.layers = 1;
-        vkCreateFramebuffer(device, &fi, nullptr, &framebuffers[i]);
+        NYX_VK_CHECK(vkCreateFramebuffer(device, &fi, nullptr, &framebuffers[i]), "vkCreateFramebuffer");
     }
 
     SDL_SetWindowSize(window, (int)swapchainExtent.width, (int)swapchainExtent.height);
 
-    NYX_LOG_INFO("Swapchain recreated with MSAA x%d", settings.msaaSamples);
+    NYX_LOG_INFO("Swapchain recreated: MSAA x%d, %u images",
+                 settings.msaaSamples, scImageCount);
 }
 
 void VulkanContext::Cleanup() {
@@ -442,5 +481,7 @@ uint32_t VulkanContext::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
         }
     }
     NYX_LOG_FATAL("Failed to find memory type");
-    return 0;  // 不会到这里，但满足编译器
+    return 0;
 }
+
+#undef NYX_VK_CHECK

@@ -221,7 +221,7 @@ void Renderer::DestroySyncObjects(VulkanContext& ctx) {
     currentFrame = 0;
 }
 
-// ============ E2: 通用 mesh 上传 ============
+// ============ 通用 mesh 上传 ============
 
 void Renderer::UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t vertexBytes,
                                VkBuffer& outBuffer, VkDeviceMemory& outMemory) {
@@ -253,7 +253,6 @@ void Renderer::UploadMeshData(VulkanContext& ctx, const void* vertexData, size_t
 // ============ Mesh ============
 
 void Renderer::CreateSkyMesh(VulkanContext& ctx) {
-    // 天空还是用 2D 顶点（vec2），不走 MeshData 路径
     struct Vertex2D { float x, y; };
 
     std::vector<Vertex2D> verts = {
@@ -296,7 +295,6 @@ void Renderer::CreateBallMesh(VulkanContext& ctx) {
 
     MeshData mesh;
 
-    // 生成网格顶点（lat × lon）
     std::vector<MeshVertex> grid;
     grid.reserve((latSegments + 1) * (lonSegments + 1));
 
@@ -316,7 +314,6 @@ void Renderer::CreateBallMesh(VulkanContext& ctx) {
         }
     }
 
-    // 三角形化
     mesh.vertices.reserve(latSegments * lonSegments * 6);
     for (int lat = 0; lat < latSegments; lat++) {
         for (int lon = 0; lon < lonSegments; lon++) {
@@ -385,7 +382,6 @@ void Renderer::CreateGroundMesh(VulkanContext& ctx) {
         mesh.vertices.push_back({glm::vec3(px, y, pz), normal, color});
     };
 
-    // 两个三角形组成一个正方形
     addVertex(-size, -size);
     addVertex( size, -size);
     addVertex( size,  size);
@@ -411,7 +407,6 @@ void Renderer::CreateShadowMesh(VulkanContext& ctx) {
     glm::vec3 normal(0.0f, 1.0f, 0.0f);
     glm::vec3 color(0.0f, 0.0f, 0.0f);
 
-    // 扇形：中心点 + 环
     std::vector<MeshVertex> ring;
     ring.reserve(segments + 2);
     ring.push_back({glm::vec3(0.0f, 0.0f, 0.0f), normal, color});
@@ -749,7 +744,9 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, cons
 
     const auto& targetPositions = *frame.targetPositions;
     const auto& targetScales = *frame.targetScales;
-    const auto& targetMaterials = *frame.targetMaterials;
+    const auto& targetMaterialIndices = *frame.targetMaterialIndices;
+    const MaterialLibrary& materialLib = *frame.materialLibrary;
+
     const glm::vec3& lightDir = frame.lighting.lightDir;
     const glm::vec4& skyTopColor = frame.lighting.skyTopColor;
     const glm::vec4& skyBottomColor = frame.lighting.skyBottomColor;
@@ -810,7 +807,7 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, cons
         vkCmdDraw(cmd, groundVertexCount, 1, 0, 0);
     }
 
-    // 阴影（buffer 只 bind 一次）
+    // 阴影
     if (!targetPositions.empty()) {
         vkCmdBindVertexBuffers(cmd, 0, 1, &shadowVertexBuffer, offsets);
 
@@ -844,13 +841,17 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, cons
         glm::mat4 model = glm::translate(glm::mat4(1.0f), targetPositions[t]);
         model = glm::scale(model, glm::vec3(targetScales[t]));
 
+        int matIdx = targetMaterialIndices[t];
+        if (matIdx < 0 || matIdx >= (int)materialLib.materials.size()) matIdx = 0;
+        const Material& mat = materialLib.materials[matIdx];
+
         ObjectPushData push;
         push.model = model;
-        push.color = targetMaterials[t].color;
+        push.color = mat.color;
         push.material = glm::vec4(
-            targetMaterials[t].metallic,
-            targetMaterials[t].roughness,
-            targetMaterials[t].emissive_strength,
+            mat.metallic,
+            mat.roughness,
+            mat.emissive_strength,
             0.0f
         );
 
@@ -909,7 +910,6 @@ void Renderer::DrawFrame(VulkanContext& ctx, const FrameData& frame) {
 
     vkResetFences(ctx.device, 1, &inFlightFences[currentFrame]);
 
-    // 更新本帧 UBO
     FrameUniforms ubo;
     ubo.viewProj = frame.proj * frame.view;
     ubo.cameraPos = glm::vec4(frame.cameraPos, 0.0f);

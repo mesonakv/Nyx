@@ -167,6 +167,7 @@ void MyGame::Update(float dt) {
     if (!editorMode_) {
         camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());
     }
+	
 
     // ---------- 最小化分支 ----------
     if (windowMinimized_) {
@@ -302,16 +303,6 @@ void MyGame::Render() {
         editor_.Draw();
     }
 
-    // ---------- 材质列表 ----------
-    std::vector<Material> targetMaterials;
-    for (auto& t : targets_.targets) {
-        if (t.alive) {
-            int idx = t.materialIndex;
-            if (idx < 0 || idx >= (int)materials_.materials.size()) idx = 0;
-            targetMaterials.push_back(materials_.materials[idx]);
-        }
-    }
-
     // ---------- 帧数据 ----------
     VulkanContext& vk = engine_->GetVulkanContext();
     Camera& camera = engine_->GetCamera();
@@ -319,6 +310,7 @@ void MyGame::Render() {
 
     const auto& alivePositions = targets_.GetAlivePositions();
     const auto& aliveScales = targets_.GetAliveScales();
+    const auto& aliveMaterialIndices = targets_.GetAliveMaterialIndices();
 
     FrameData frameData;
     frameData.view = camera.GetViewMatrix();
@@ -326,7 +318,8 @@ void MyGame::Render() {
     frameData.cameraPos = camera.position;
     frameData.targetPositions = &alivePositions;
     frameData.targetScales = &aliveScales;
-    frameData.targetMaterials = &targetMaterials;
+    frameData.targetMaterialIndices = &aliveMaterialIndices;
+    frameData.materialLibrary = &materials_;
     frameData.lighting = lightingData;
     frameData.imgui = &engine_->GetImGuiManager();
 

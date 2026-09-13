@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include "../../NyxEngine/Scene/Material.h"
 #include <vector>
+#include <random>
 
 enum class MovementType {
     Static,
@@ -40,13 +41,20 @@ public:
     void Update(float dt);
     void Shoot(glm::vec3 cameraPos, glm::vec3 direction);
 
-    // A3: 返回内部缓存的引用，零分配
+    // 返回内部缓存的引用，零分配
     const std::vector<glm::vec3>& GetAlivePositions() const;
     const std::vector<float>& GetAliveScales() const;
-    std::vector<int> GetAliveMaterialIndices() const;
+    const std::vector<int>& GetAliveMaterialIndices() const;
 
 private:
-    // A3: 每次查询时重建。clear() 保留 capacity，所以稳定后零分配
+    // 线程安全的随机数生成器
+    std::mt19937 rng_{std::random_device{}()};
+
+    // 每次查询时重建。clear() 保留 capacity，所以稳定后零分配
     mutable std::vector<glm::vec3> alivePositionsCache_;
     mutable std::vector<float> aliveScalesCache_;
+    mutable std::vector<int> aliveMaterialIndicesCache_;
+
+    // 生成 [0, 2π) 的随机角度
+    float RandomAngle();
 };
