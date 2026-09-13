@@ -79,6 +79,8 @@ void MyGame::Shutdown() {
 
 // ============ 主循环 ============
 
+// ============ 主循环 ============
+
 void MyGame::Run() {
     while (running_) {
         uint64_t frameStartCounter = SDL_GetPerformanceCounter();
@@ -88,7 +90,7 @@ void MyGame::Run() {
         lastFrameCounter_ = currentFrameCounter;
         if (dt > 0.1f) dt = 0.1f;
 
-        engine_->BeginFrame();
+        engine_->BeginFrame(dt);   // ← 传 dt
 
         // ---------- 事件 ----------
         SDL_Event event;

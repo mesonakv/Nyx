@@ -23,6 +23,9 @@ void NyxEngine::Initialize(SDL_Window* window, const DisplaySettings& settings) 
     camera_.pitch = config_.camera.initialPitch;
     camera_.sensitivity = config_.camera.sensitivity;
     camera_.fov = config_.camera.fov;
+
+    // AudioClock 保持默认（Stopped，time=0）
+    // 具体开始播放由 Game 层调用 Start()
 }
 
 void NyxEngine::Shutdown() {
@@ -32,8 +35,9 @@ void NyxEngine::Shutdown() {
     vk_.Cleanup();
 }
 
-void NyxEngine::BeginFrame() {
+void NyxEngine::BeginFrame(float dt) {
     input_.BeginFrame();
+    audioClock_.Tick(dt);
 }
 
 void NyxEngine::EndFrame() {

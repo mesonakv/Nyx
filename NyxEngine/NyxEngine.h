@@ -6,24 +6,27 @@
 #include "Render/Renderer.h"
 #include "Render/LightingSystem.h"
 #include "Scene/Camera.h"
+#include "Audio/AudioClock.h"
 #include <SDL.h>
 
 // ============ NyxEngine 实例 ============
 //
-// T3.4：引擎拥有所有子系统。
-// main 只负责：SDL 初始化、窗口创建、Game 逻辑、编辑器、主循环。
+// 引擎拥有所有子系统。
+// main 只负责：SDL 初始化、窗口创建、Game 逻辑、主循环。
 //
 // 生命周期：
 //   Initialize(window, settings) -> 创建并初始化所有子系统
-//   主循环: BeginFrame() -> [game update] -> [render] -> EndFrame()
+//   主循环: BeginFrame(dt) -> [game update] -> [render] -> EndFrame()
 //   Shutdown() -> 逆序销毁
+//
+// BeginFrame 接收 dt，用它推进引擎内部的时钟类子系统（AudioClock）。
 
 class NyxEngine {
 public:
     void Initialize(SDL_Window* window, const DisplaySettings& settings);
     void Shutdown();
 
-    void BeginFrame();
+    void BeginFrame(float dt);
     void EndFrame();
 
     // ---------- 访问器 ----------
@@ -34,6 +37,7 @@ public:
     InputSystem& GetInput()             { return input_; }
     LightingSystem& GetLighting()       { return lighting_; }
     Camera& GetCamera()                 { return camera_; }
+    AudioClock& GetAudioClock()         { return audioClock_; }
 
 private:
     EngineConfig config_;
@@ -43,4 +47,5 @@ private:
     InputSystem input_;
     LightingSystem lighting_;
     Camera camera_;
+    AudioClock audioClock_;
 };
