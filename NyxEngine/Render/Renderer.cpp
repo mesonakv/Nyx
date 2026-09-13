@@ -50,6 +50,9 @@ void Renderer::Initialize(VulkanContext& ctx, SDL_Window* w) {
 
     CreateGraphicsPipeline(ctx);
     CreateSkyPipeline(ctx);
+    CreateDebugLinePipeline(ctx);
+
+    debugDraw_.Initialize(ctx);
 
     CreateSyncObjects(ctx);
 }
@@ -691,6 +694,133 @@ void Renderer::CreateSkyPipeline(VulkanContext& ctx) {
     NYX_LOG_INFO("Sky pipeline created");
 }
 
+void Renderer::CreateDebugLinePipeline(VulkanContext& ctx) {
+    auto vertCode = ReadFile("Shaders/debug_line.vert.spv");
+    auto fragCode = ReadFile("Shaders/debug_line.frag.spv");
+
+    VkShaderModuleCreateInfo smi = {};
+    smi.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smi.codeSize = vertCode.size();
+    smi.pCode = reinterpret_cast<const uint32_t*>(vertCode.data());
+    VkShaderModule vertModule;
+    vkCreateShaderModule(ctx.device, &smi, nullptr, &vertModule);
+
+    smi.codeSize = fragCode.size();
+    smi.pCode = reinterpret_cast<const uint32_t*>(fragCode.data());
+    VkShaderModule fragModule;
+    vkCreateShaderModule(ctx.device, &smi, nullptr, &fragModule);
+
+    VkPipelineShaderStageCreateInfo vertStage = {};
+    vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertStage.module = vertModule;
+    vertStage.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragStage = {};
+    fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragStage.module = fragModule;
+    fragStage.pName = "main";
+
+    VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
+
+    // 顶点布局：position(12) + color(12) = 24 字节
+    VkVertexInputBindingDescription binding = {};
+    binding.binding = 0;
+    binding.stride = 24;
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attrs[2] = {};
+    attrs[0].binding = 0; attrs[0].location = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[0].offset = 0;
+    attrs[1].binding = 0; attrs[1].location = 1; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = 12;
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = 2;
+    vertexInput.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+
+    VkViewport viewport = {};
+    viewport.width = (float)ctx.swapchainExtent.width;
+    viewport.height = (float)ctx.swapchainExtent.height;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor = {};
+    scissor.extent = ctx.swapchainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+    // 深度偏移，避免线和几何体共面时 z-fighting
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = -1.0f;
+    rasterizer.depthBiasSlopeFactor = -1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisample = {};
+    multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = ctx.GetMSAASamples();
+    multisample.sampleShadingEnable = VK_FALSE;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkPipelineColorBlendAttachmentState blendAtt = {};
+    blendAtt.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    blendAtt.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo blend = {};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blendAtt;
+
+    VkPipelineLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &descriptorSetLayout;
+
+    vkCreatePipelineLayout(ctx.device, &layoutInfo, nullptr, &debugLinePipelineLayout);
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisample;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &blend;
+    pipelineInfo.layout = debugLinePipelineLayout;
+    pipelineInfo.renderPass = ctx.renderPass;
+    pipelineInfo.subpass = 0;
+
+    vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &debugLinePipeline);
+
+    vkDestroyShaderModule(ctx.device, vertModule, nullptr);
+    vkDestroyShaderModule(ctx.device, fragModule, nullptr);
+
+    NYX_LOG_INFO("Debug line pipeline created");
+}
+
 void Renderer::RecreatePipeline(VulkanContext& ctx) {
     vkDeviceWaitIdle(ctx.device);
 
@@ -712,9 +842,18 @@ void Renderer::RecreatePipeline(VulkanContext& ctx) {
         vkDestroyPipelineLayout(ctx.device, skyPipelineLayout, nullptr);
         skyPipelineLayout = VK_NULL_HANDLE;
     }
+    if (debugLinePipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(ctx.device, debugLinePipeline, nullptr);
+        debugLinePipeline = VK_NULL_HANDLE;
+    }
+    if (debugLinePipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(ctx.device, debugLinePipelineLayout, nullptr);
+        debugLinePipelineLayout = VK_NULL_HANDLE;
+    }
 
     CreateGraphicsPipeline(ctx);
     CreateSkyPipeline(ctx);
+    CreateDebugLinePipeline(ctx);
 
     CreateSyncObjects(ctx);
 }
@@ -875,6 +1014,17 @@ void Renderer::RecordCommandBuffer(VulkanContext& ctx, uint32_t imageIndex, cons
         vkCmdDraw(cmd, crosshairVertexCount, 1, 0, 0);
     }
 
+    // Debug 线段
+    if (!debugDraw_.IsEmpty()) {
+        VkDeviceSize debugOffset = 0;
+        VkBuffer dbgBuf = debugDraw_.GetVertexBuffer();
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, debugLinePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, debugLinePipelineLayout,
+                                0, 1, &descriptorSets[currentFrame], 0, nullptr);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &dbgBuf, &debugOffset);
+        vkCmdDraw(cmd, debugDraw_.GetVertexCount(), 1, 0, 0);
+    }
+
     if (frame.imgui) {
         frame.imgui->Render(cmd);
     }
@@ -918,6 +1068,9 @@ void Renderer::DrawFrame(VulkanContext& ctx, const FrameData& frame) {
     ubo.ambientColor = glm::vec4(frame.lighting.ambientColor, 0.0f);
     memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
 
+    // 上传 Debug 线段数据到 GPU
+    debugDraw_.Upload(ctx);
+
     RecordCommandBuffer(ctx, imageIndex, frame);
 
     VkSubmitInfo si = {};
@@ -958,6 +1111,9 @@ void Renderer::Cleanup(VulkanContext& ctx) {
     DestroySyncObjects(ctx);
     DestroyUniformResources(ctx);
 
+    // Debug Draw
+    debugDraw_.Shutdown(ctx);
+
     vkDestroyBuffer(ctx.device, crosshairVertexBuffer, nullptr);
     vkFreeMemory(ctx.device, crosshairVertexBufferMemory, nullptr);
 
@@ -978,4 +1134,11 @@ void Renderer::Cleanup(VulkanContext& ctx) {
 
     vkDestroyPipeline(ctx.device, skyPipeline, nullptr);
     vkDestroyPipelineLayout(ctx.device, skyPipelineLayout, nullptr);
+
+    if (debugLinePipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(ctx.device, debugLinePipeline, nullptr);
+    }
+    if (debugLinePipelineLayout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(ctx.device, debugLinePipelineLayout, nullptr);
+    }
 }

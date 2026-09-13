@@ -11,6 +11,7 @@
 #include "NyxEngine/Render/Renderer.h"
 #include "NyxEngine/Render/FrameData.h"
 #include "NyxEngine/Scene/Camera.h"
+#include "NyxEngine/Render/DebugDraw.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_sdl2.h>
@@ -165,17 +166,6 @@ void MyGame::Update(float dt) {
         editorMode_ = !editorMode_;
         input.SetMouseCaptured(!editorMode_);
     }
-
-    // ---------- 临时测试：InputEventHistory ----------
-    if (input.WasKeyPressed(SDL_SCANCODE_Q)) {
-        const auto& hist = input.GetEventHistory();
-        uint64_t lastQ = input.GetLastKeyPressTime(SDL_SCANCODE_Q);
-        uint64_t now = Platform::GetTimerNanos();
-        NYX_LOG_INFO("History: %zu events | last Q age: %.2f ms",
-                     hist.Size(),
-                     lastQ ? (double)(now - lastQ) / 1.0e6 : -1.0);
-    }
-    // ---------- 临时测试结束 ----------
 
     if (!editorMode_) {
         camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());
@@ -339,6 +329,27 @@ void MyGame::Render() {
     frameData.materialLibrary = &materials_;
     frameData.lighting = lightingData;
     frameData.imgui = &engine_->GetImGuiManager();
+
+    // ---------- 临时测试：Debug Draw ----------
+    {
+        DebugDraw& dbg = engine_->GetRenderer().GetDebugDraw();
+        dbg.Begin();
+
+        // 红球：原点前方
+        dbg.Sphere(glm::vec3(0, 1, 5), 0.5f, glm::vec3(1, 0, 0));
+
+        // 绿胶囊：右边
+        dbg.Capsule(glm::vec3(2, 0.5f, 5), glm::vec3(2, 2.5f, 5), 0.4f,
+                    glm::vec3(0, 1, 0));
+
+        // 蓝盒：左边
+        dbg.Box(glm::vec3(-2, 1, 5), glm::vec3(0.5f), glm::quat(1,0,0,0),
+                glm::vec3(0, 0, 1));
+
+        // 黄射线：从眼睛往前
+        dbg.Ray(eyePos, camera.GetDirection(), 10.0f, glm::vec3(1, 1, 0));
+    }
+    // ---------- 临时测试结束 ----------
 
     engine_->GetRenderer().DrawFrame(vk, frameData);
 }

@@ -3,6 +3,7 @@
 #include "../Core/ImGuiManager.h"
 #include "../Scene/Material.h"
 #include "FrameData.h"
+#include "DebugDraw.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
@@ -17,8 +18,9 @@ public:
     void DrawFrame(VulkanContext& ctx, const FrameData& frame);
     void Cleanup(VulkanContext& ctx);
 
+    DebugDraw& GetDebugDraw() { return debugDraw_; }
+
 private:
-    // ---------- 初始化步骤 ----------
     void CreateBallMesh(VulkanContext& ctx);
     void CreateCrosshairMesh(VulkanContext& ctx);
     void CreateGroundMesh(VulkanContext& ctx);
@@ -33,6 +35,7 @@ private:
 
     void CreateGraphicsPipeline(VulkanContext& ctx);
     void CreateSkyPipeline(VulkanContext& ctx);
+    void CreateDebugLinePipeline(VulkanContext& ctx);
 
     void CreateSyncObjects(VulkanContext& ctx);
     void DestroySyncObjects(VulkanContext& ctx);
@@ -50,6 +53,9 @@ private:
     VkPipelineLayout skyPipelineLayout = VK_NULL_HANDLE;
     VkBuffer skyVertexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory skyVertexBufferMemory = VK_NULL_HANDLE;
+
+    VkPipeline debugLinePipeline = VK_NULL_HANDLE;
+    VkPipelineLayout debugLinePipelineLayout = VK_NULL_HANDLE;
 
     VkBuffer vertexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
@@ -82,4 +88,6 @@ private:
 
     uint32_t currentFrame = 0;
     SDL_Window* window = nullptr;
+
+    DebugDraw debugDraw_;
 };

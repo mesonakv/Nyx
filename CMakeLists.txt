@@ -61,6 +61,7 @@ set(NYX_ENGINE_SOURCES
     # Render
     NyxEngine/Render/LightingSystem.cpp
     NyxEngine/Render/Renderer.cpp
+    NyxEngine/Render/DebugDraw.cpp              # ← 新增
 
     # Resource
     NyxEngine/Resource/MeshLoader.cpp
