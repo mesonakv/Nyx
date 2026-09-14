@@ -6,6 +6,7 @@
 #include "LightingPanel.h"
 #include "PerformancePanel.h"
 #include "InputPanel.h"
+#include "PlayerPanel.h"
 #include <SDL.h>
 #include <vector>
 
@@ -14,6 +15,7 @@ class MaterialLibrary;
 class TargetManager;
 class FrameTimeHistory;
 class InputSystem;
+class Player;
 struct EngineConfig;
 struct DisplaySettings;
 
@@ -28,6 +30,7 @@ public:
         const std::vector<SDL_DisplayMode>* displayModes = nullptr;
         const FrameTimeHistory* frameTimes = nullptr;
         InputSystem* input = nullptr;
+        Player* player = nullptr;         // 新增
         bool* pendingDisplayChange = nullptr;
     };
 
@@ -42,4 +45,5 @@ private:
     LightingPanel lightingPanel_;
     PerformancePanel performancePanel_;
     InputPanel inputPanel_;
+    PlayerPanel playerPanel_;             // 新增
 };

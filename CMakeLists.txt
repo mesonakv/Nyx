@@ -56,6 +56,7 @@ set(NYX_ENGINE_SOURCES
     NyxEngine/Editor/LightingPanel.cpp
     NyxEngine/Editor/MaterialPanel.cpp
     NyxEngine/Editor/PerformancePanel.cpp
+    NyxEngine/Editor/PlayerPanel.cpp           # ← 新增
     NyxEngine/Editor/TargetMovementPanel.cpp
 
     # Render

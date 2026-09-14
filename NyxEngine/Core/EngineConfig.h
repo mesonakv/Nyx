@@ -30,7 +30,7 @@ struct LightingConfig {
 
 // ---------- 玩家 ----------
 struct PlayerConfig {
-    glm::vec3 initialPosition = {0.0f, 0.0f, 8.0f};
+    glm::vec3 initialPosition = {0.0f, -2.0f, 8.0f};
     float eyeHeight = 1.7f;
 };
 

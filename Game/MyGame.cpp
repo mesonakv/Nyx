@@ -104,6 +104,7 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     ctx.frameTimes = &frameTimes_;
     ctx.pendingDisplayChange = &pendingDisplayChange_;
     ctx.input = &engine.GetInput();
+    ctx.player = &engine.GetWorldState().player;
     editor_.Initialize(ctx);
 
     NYX_LOG_INFO("MyGame initialized");
@@ -240,8 +241,9 @@ void MyGame::Update(float dt) {
     }
 
     bool jumpPressed = !editorMode_ && input.WasKeyPressed(SDL_SCANCODE_SPACE);
+    bool jumpHeld = !editorMode_ && input.IsKeyDown(SDL_SCANCODE_SPACE);
 
-    player.Update(dt, moveDir, jumpPressed, camera.yaw, engine_->GetWorldState().physics);
+    player.Update(dt, moveDir, jumpPressed, jumpHeld, camera.yaw, engine_->GetWorldState().physics);
 
     // ---------- 游戏逻辑 ----------
     uint32_t currentTime = SDL_GetTicks();
