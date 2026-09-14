@@ -3,6 +3,17 @@
 #include <algorithm>
 #include <cmath>
 
+const char* PlayerStateToString(PlayerState s) {
+    switch (s) {
+    case PlayerState::Idle: return "Idle";
+    case PlayerState::Run:  return "Run";
+    case PlayerState::Jump: return "Jump";
+    case PlayerState::Fall: return "Fall";
+    case PlayerState::Land: return "Land";
+    default: return "?";
+    }
+}
+
 void Player::Update(float dt,
                     const glm::vec3& moveDir,
                     bool jumpPressed,
@@ -13,11 +24,12 @@ void Player::Update(float dt,
     (void)yaw;
     wasOnGround = onGround;
 
-    // ---------- 1. 计算 wish direction（水平） ----------
+    // ---------- 1. 计算 wish direction ----------
     glm::vec3 wishDir = moveDir;
     wishDir.y = 0.0f;
     float wishLen = glm::length(wishDir);
-    if (wishLen > 0.001f) {
+    bool hasMoveInput = (wishLen > 0.001f);
+    if (hasMoveInput) {
         wishDir /= wishLen;
     } else {
         wishDir = glm::vec3(0.0f);
@@ -25,18 +37,14 @@ void Player::Update(float dt,
 
     // ---------- 2. 水平移动 ----------
     if (onGround) {
-        if (wishLen > 0.001f) {
-            // 先衰减垂直于 wishDir 的速度分量
-            // 这样"改变移动方向"时旧方向的速度会快速消失
+        if (hasMoveInput) {
             ApplyLateralFriction(wishDir, dt);
-            // 再沿 wishDir 加速
             Accelerate(wishDir, groundAccel, maxSpeed, dt);
         } else {
             ApplyFriction(dt);
         }
     } else {
-        // 空中不衰减垂直速度（保留动量，允许跳跃后的方向控制）
-        if (wishLen > 0.001f) {
+        if (hasMoveInput) {
             Accelerate(wishDir, airAccel, maxSpeed, dt);
         }
     }
@@ -117,16 +125,43 @@ void Player::Update(float dt,
         physics.UpdateTransform(physicsBody, t);
     }
 
-    // ---------- 12. 落地帧 ----------
-    if (!wasOnGround && onGround) {
-        // 未来：落地音效 / 粒子 / 状态机切 Land
+    // ---------- 12. 状态机 ----------
+    UpdateState(dt, hasMoveInput);
+}
+
+// ============ 状态机 ============
+
+void Player::UpdateState(float dt, bool hasMoveInput) {
+    PlayerState newState;
+
+    if (!onGround) {
+        // 空中：上升期是 Jump，下落期是 Fall
+        newState = (velocity.y > 0.0f) ? PlayerState::Jump : PlayerState::Fall;
+    } else if (!wasOnGround) {
+        // 刚落地：强制进入 Land
+        newState = PlayerState::Land;
+    } else if (state == PlayerState::Land && stateTimer < landDuration) {
+        // Land 状态未结束：保持
+        newState = PlayerState::Land;
+    } else {
+        // 地面稳定状态：Idle 或 Run
+        newState = hasMoveInput ? PlayerState::Run : PlayerState::Idle;
+    }
+
+    if (newState != state) {
+        state = newState;
+        stateTimer = 0.0f;
+
+        // 进入 Land 时的钩子（将来：音效、粒子、相机抖动）
+        // if (state == PlayerState::Land) { ... }
+    } else {
+        stateTimer += dt;
     }
 }
 
 // ============ 摩擦 ============
 
 void Player::ApplyFriction(float dt) {
-    // 无输入时：整体衰减水平速度
     float speed = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
     if (speed < 0.1f) {
         velocity.x = 0.0f;
@@ -142,15 +177,6 @@ void Player::ApplyFriction(float dt) {
 }
 
 void Player::ApplyLateralFriction(const glm::vec3& wishDir, float dt) {
-    // 有输入时：只衰减垂直于 wishDir 的速度分量。
-    // 保留沿 wishDir 的分量，避免"保持方向不变"时速度流失。
-    //
-    // 数学：
-    //   vel2d = 水平速度向量
-    //   along = vel2d · wishDir （沿 wishDir 的标量分量）
-    //   lateral = vel2d - wishDir * along （垂直分量）
-    //   衰减 lateral，保留 along
-
     glm::vec3 vel2d(velocity.x, 0.0f, velocity.z);
     float along = glm::dot(vel2d, wishDir);
     glm::vec3 lateral = vel2d - wishDir * along;
@@ -170,7 +196,6 @@ void Player::ApplyLateralFriction(const glm::vec3& wishDir, float dt) {
 // ============ 加速 ============
 
 void Player::Accelerate(const glm::vec3& wishDir, float accel, float maxSpeed, float dt) {
-    // Source 引擎风格：只在沿 wishDir 的分速度 < maxSpeed 时加速
     float currentSpeed = velocity.x * wishDir.x + velocity.z * wishDir.z;
     float addSpeed = maxSpeed - currentSpeed;
     if (addSpeed <= 0.0f) return;

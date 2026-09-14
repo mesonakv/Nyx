@@ -4,17 +4,32 @@
 
 class PhysicsWorld;
 
+// ============ PlayerState ============
+//
+// 玩家动作状态。
+//
+// 状态转换：
+//   Idle  ←→ Run           （地面，有无水平输入）
+//   Idle/Run → Jump        （起跳）
+//   Jump → Fall            （到达最高点）
+//   Fall → Land            （落地）
+//   Land → Idle/Run        （landDuration 之后）
+//
+// Land 状态是"标志性"的：不阻塞移动和跳跃，
+// 只是提供一个短暂的窗口给音效、粒子、动画。
+
+enum class PlayerState : uint8_t {
+    Idle,
+    Run,
+    Jump,
+    Fall,
+    Land,
+    Count
+};
+
+const char* PlayerStateToString(PlayerState s);
+
 // ============ Player ============
-//
-// 玩家实体。
-//
-// 位置语义：
-//   position 是玩家"脚底"的世界坐标。
-//   眼睛位置 = position + (0, eyeHeight, 0)。
-//
-// 物理语义：
-//   velocity 是线速度（m/s）。
-//   onGround 由地面检测更新。
 
 class Player {
 public:
@@ -30,6 +45,11 @@ public:
     ShapeHandle physicsBody;
     bool onGround = false;
     bool wasOnGround = false;
+
+    // ---------- 状态机 ----------
+    PlayerState state = PlayerState::Idle;
+    float stateTimer = 0.0f;       // 当前状态已持续的时间（秒）
+    float landDuration = 0.1f;     // Land 状态的持续时间
 
     // ---------- 手感参数 ----------
     float maxSpeed = 8.0f;
@@ -70,4 +90,6 @@ private:
     void ApplyFriction(float dt);
     void ApplyLateralFriction(const glm::vec3& wishDir, float dt);
     void Accelerate(const glm::vec3& wishDir, float accel, float maxSpeed, float dt);
+
+    void UpdateState(float dt, bool hasMoveInput);
 };
