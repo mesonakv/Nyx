@@ -24,7 +24,7 @@ find_package(SDL2 REQUIRED)
 #   - 无法控制哪些文件属于哪个 target
 #   - 加文件时缺少"这一步是有意识决定"的仪式感
 #
-# 分层顺序：入口 → Audio → Core → Editor → Render → Resource → Scene → World
+# 分层顺序：入口 → Audio → Input → Core → Editor → Render → Resource → Scene → World → Physics
 
 set(NYX_ENGINE_SOURCES
     # 引擎入口
@@ -34,6 +34,8 @@ set(NYX_ENGINE_SOURCES
     NyxEngine/Audio/AudioClock.cpp
 
     # Input
+    NyxEngine/Input/Action.cpp
+    NyxEngine/Input/InputMap.cpp
     NyxEngine/Input/Win32InputBackend.cpp
 
     # Core
@@ -52,17 +54,17 @@ set(NYX_ENGINE_SOURCES
     NyxEngine/Editor/CameraPanel.cpp
     NyxEngine/Editor/DisplaySettingsPanel.cpp
     NyxEngine/Editor/EditorPanel.cpp
-    NyxEngine/Editor/InputPanel.cpp          # ← 新增
+    NyxEngine/Editor/InputPanel.cpp
     NyxEngine/Editor/LightingPanel.cpp
     NyxEngine/Editor/MaterialPanel.cpp
     NyxEngine/Editor/PerformancePanel.cpp
-    NyxEngine/Editor/PlayerPanel.cpp           # ← 新增
+    NyxEngine/Editor/PlayerPanel.cpp
     NyxEngine/Editor/TargetMovementPanel.cpp
 
     # Render
     NyxEngine/Render/LightingSystem.cpp
     NyxEngine/Render/Renderer.cpp
-    NyxEngine/Render/DebugDraw.cpp              # ← 新增
+    NyxEngine/Render/DebugDraw.cpp
 
     # Resource
     NyxEngine/Resource/MeshLoader.cpp
@@ -79,9 +81,9 @@ set(NYX_ENGINE_SOURCES
     NyxEngine/Physics/Shapes/SphereShape.cpp
     NyxEngine/Physics/Shapes/CapsuleShape.cpp
     NyxEngine/Physics/Shapes/BoxShape.cpp
-    NyxEngine/Physics/Broadphase/BruteForceBroadphase.cpp   # ← 新增
-    NyxEngine/Physics/Narrowphase/Narrowphase.cpp   # ← 新增
-    NyxEngine/Physics/PhysicsWorld.cpp                # ← 新增
+    NyxEngine/Physics/Broadphase/BruteForceBroadphase.cpp
+    NyxEngine/Physics/Narrowphase/Narrowphase.cpp
+    NyxEngine/Physics/PhysicsWorld.cpp
 )
 
 # ============================================================

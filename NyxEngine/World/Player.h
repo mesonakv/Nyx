@@ -15,13 +15,6 @@ class PhysicsWorld;
 // 物理语义：
 //   velocity 是线速度（m/s）。
 //   onGround 由地面检测更新。
-//
-// 移动模型（Source 引擎风格）：
-//   - 水平移动分地面/空中两种加速度
-//   - 地面有摩擦，松开方向键后滑行停下
-//   - 跳跃有 coyote time（离地后仍可跳的窗口）
-//     和 jump buffer（提前按跳跃的缓冲）
-//   - 松开跳跃键可截断跳跃（jump cut）
 
 class Player {
 public:
@@ -39,22 +32,17 @@ public:
     bool wasOnGround = false;
 
     // ---------- 手感参数 ----------
-    // 这些参数可以被编辑器实时修改，改动立刻生效。
+    float maxSpeed = 8.0f;
+    float groundAccel = 60.0f;
+    float groundFriction = 8.0f;
+    float airAccel = 15.0f;
 
-    // 水平移动
-    float maxSpeed = 8.0f;           // 最大水平速度（m/s）
-    float groundAccel = 60.0f;       // 地面加速度（m/s²）
-    float groundFriction = 8.0f;     // 地面摩擦系数
-    float airAccel = 15.0f;          // 空中加速度（m/s²）
+    float jumpSpeed = 8.0f;
+    float gravity = 25.0f;
+    float jumpCutMultiplier = 0.5f;
+    float coyoteTime = 0.1f;
+    float jumpBuffer = 0.1f;
 
-    // 跳跃
-    float jumpSpeed = 8.0f;          // 跳跃初速度（m/s）
-    float gravity = 25.0f;           // 重力加速度（m/s²）
-    float jumpCutMultiplier = 0.5f;  // 松开跳跃键时的速度衰减
-    float coyoteTime = 0.1f;         // 离地后仍可跳的窗口（秒）
-    float jumpBuffer = 0.1f;         // 提前按跳跃的缓冲（秒）
-
-    // 地面检测
     float groundRayMaxDist = 6.0f;
 
     // ---------- 查询 ----------
@@ -67,11 +55,6 @@ public:
     }
 
     // ---------- 更新 ----------
-    // moveDir：世界空间的期望移动方向（水平，可未归一化）
-    // jumpPressed：本帧刚按下跳跃键
-    // jumpHeld：跳跃键当前是否按住
-    // yaw：相机偏航角（暂未使用，moveDir 已在世界空间）
-    // physics：物理世界
     void Update(float dt,
                 const glm::vec3& moveDir,
                 bool jumpPressed,
@@ -80,11 +63,11 @@ public:
                 PhysicsWorld& physics);
 
 private:
-    // 跳跃状态
     float coyoteTimer_ = 0.0f;
     float jumpBufferTimer_ = 0.0f;
-    bool jumping_ = false;   // 用于 jump cut
+    bool jumping_ = false;
 
     void ApplyFriction(float dt);
+    void ApplyLateralFriction(const glm::vec3& wishDir, float dt);
     void Accelerate(const glm::vec3& wishDir, float accel, float maxSpeed, float dt);
 };

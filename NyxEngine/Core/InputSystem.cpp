@@ -9,6 +9,9 @@ void InputSystem::Initialize(SDL_Window* window) {
     std::memset(keysDown_, 0, sizeof(keysDown_));
     std::memset(keysPressedThisFrame_, 0, sizeof(keysPressedThisFrame_));
     std::memset(keysReleasedThisFrame_, 0, sizeof(keysReleasedThisFrame_));
+    std::memset(mouseButtonsDown_, 0, sizeof(mouseButtonsDown_));
+    std::memset(mouseButtonsPressedThisFrame_, 0, sizeof(mouseButtonsPressedThisFrame_));
+    std::memset(mouseButtonsReleasedThisFrame_, 0, sizeof(mouseButtonsReleasedThisFrame_));
     mouseDeltaX_ = 0.0f;
     mouseDeltaY_ = 0.0f;
     mouseCaptured_ = false;
@@ -16,7 +19,6 @@ void InputSystem::Initialize(SDL_Window* window) {
     history_.Clear();
     totalEventCount_ = 0;
 
-    // 尝试初始化 Raw Input 后端
 #ifdef _WIN32
     auto backend = std::make_unique<Win32InputBackend>();
     bool ok = backend->Initialize(window, [this](const InputEvent& ev) {
@@ -52,13 +54,13 @@ void InputSystem::Shutdown() {
 }
 
 void InputSystem::BeginFrame() {
-    // 清空本帧的瞬时状态
     mouseDeltaX_ = 0.0f;
     mouseDeltaY_ = 0.0f;
     std::memset(keysPressedThisFrame_, 0, sizeof(keysPressedThisFrame_));
     std::memset(keysReleasedThisFrame_, 0, sizeof(keysReleasedThisFrame_));
+    std::memset(mouseButtonsPressedThisFrame_, 0, sizeof(mouseButtonsPressedThisFrame_));
+    std::memset(mouseButtonsReleasedThisFrame_, 0, sizeof(mouseButtonsReleasedThisFrame_));
 
-    // 清理 250ms 之前的事件
     uint64_t now = Platform::GetTimerNanos();
     uint64_t cutoff = (now > InputEventHistory::kWindowNanos)
                     ? (now - InputEventHistory::kWindowNanos)
@@ -67,9 +69,6 @@ void InputSystem::BeginFrame() {
 }
 
 bool InputSystem::IsRawInputActive() const {
-    // Raw Input 只在鼠标被捕获时有效。
-    // 编辑器模式下鼠标释放，Windows 不再把 WM_INPUT 送进窗口，
-    // 此时必须回退到 SDL 通道。
     return useRawInput_ && mouseCaptured_;
 }
 
@@ -82,7 +81,6 @@ void InputSystem::ProcessEvent(const SDL_Event& e) {
         break;
 
     case SDL_KEYDOWN:
-        // Raw Input 激活时忽略 SDL 键盘事件（ImGui 自己会用 SDL 通道）
         if (rawActive) break;
         if (!e.key.repeat) {
             InputEvent ev = {};
@@ -181,13 +179,43 @@ void InputSystem::ApplyEvent(const InputEvent& ev) {
         if (ev.type == InputEventType::MouseMove) {
             mouseDeltaX_ += (float)ev.value1;
             mouseDeltaY_ += (float)ev.value2;
+        } else if (ev.type == InputEventType::MouseButtonDown) {
+            int btn = ev.value1;
+            if (btn >= 0 && btn < kMaxMouseButtons) {
+                mouseButtonsDown_[btn] = true;
+                mouseButtonsPressedThisFrame_[btn] = true;
+            }
+        } else if (ev.type == InputEventType::MouseButtonUp) {
+            int btn = ev.value1;
+            if (btn >= 0 && btn < kMaxMouseButtons) {
+                mouseButtonsDown_[btn] = false;
+                mouseButtonsReleasedThisFrame_[btn] = true;
+            }
         }
     }
 }
 
 void InputSystem::EndFrame() {
-    // 保留接口
 }
+
+// ============ 鼠标按钮 ============
+
+bool InputSystem::IsMouseButtonDown(int button) const {
+    if (button < 0 || button >= kMaxMouseButtons) return false;
+    return mouseButtonsDown_[button];
+}
+
+bool InputSystem::WasMouseButtonPressed(int button) const {
+    if (button < 0 || button >= kMaxMouseButtons) return false;
+    return mouseButtonsPressedThisFrame_[button];
+}
+
+bool InputSystem::WasMouseButtonReleased(int button) const {
+    if (button < 0 || button >= kMaxMouseButtons) return false;
+    return mouseButtonsReleasedThisFrame_[button];
+}
+
+// ============ 键盘 ============
 
 bool InputSystem::IsKeyDown(SDL_Scancode key) const {
     if (key < 0 || key >= kMaxKeys) return false;
@@ -203,6 +231,8 @@ bool InputSystem::WasKeyReleased(SDL_Scancode key) const {
     if (key < 0 || key >= kMaxKeys) return false;
     return keysReleasedThisFrame_[key];
 }
+
+// ============ 事件历史 ============
 
 uint64_t InputSystem::GetLastKeyPressTime(SDL_Scancode key) const {
     for (size_t i = history_.Size(); i > 0; i--) {
@@ -241,22 +271,23 @@ bool InputSystem::WasKeyPressedSince(SDL_Scancode key, uint64_t sinceTimestamp) 
     return false;
 }
 
+// ============ 后端切换 ============
+
 void InputSystem::SetUseRawInput(bool use) {
-    if (!rawInputBackend_) {
-        return;
-    }
+    if (!rawInputBackend_) return;
     if (useRawInput_ == use) return;
 
     useRawInput_ = use;
 
-    // 切换时清空状态，避免"SDL 按下、Raw Input 释放"这种错位
     std::memset(keysDown_, 0, sizeof(keysDown_));
     std::memset(keysPressedThisFrame_, 0, sizeof(keysPressedThisFrame_));
     std::memset(keysReleasedThisFrame_, 0, sizeof(keysReleasedThisFrame_));
+    std::memset(mouseButtonsDown_, 0, sizeof(mouseButtonsDown_));
+    std::memset(mouseButtonsPressedThisFrame_, 0, sizeof(mouseButtonsPressedThisFrame_));
+    std::memset(mouseButtonsReleasedThisFrame_, 0, sizeof(mouseButtonsReleasedThisFrame_));
     mouseDeltaX_ = 0.0f;
     mouseDeltaY_ = 0.0f;
     history_.Clear();
-    // totalEventCount_ 不清零
 
     NYX_LOG_INFO("InputSystem: switched to %s channel", use ? "Raw Input" : "SDL");
 }

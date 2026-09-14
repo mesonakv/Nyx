@@ -9,42 +9,38 @@
 // 职责：采集输入事件，缓存鼠标/键盘状态。
 //
 // 双通道设计：
-//   - Raw Input 通道（Windows，游戏模式）：通过 Win32InputBackend 采集
-//   - SDL 通道（Fallback 和编辑器模式）：通过 SDL_Event 采集
+//   - Raw Input 通道（Windows，游戏模式）：Win32InputBackend
+//   - SDL 通道（Fallback 和编辑器模式）：SDL_Event
 //
-// 有效通道判定（IsRawInputActive）：
-//   useRawInput_ && mouseCaptured_
-//   - 游戏模式：鼠标被捕获，Raw Input 有效
-//   - 编辑器模式：鼠标被释放，Raw Input 无效，退回 SDL
-//
-// ImGui 始终从 SDL 事件读（不受影响）。
-// 窗口事件（resize/focus/quit）始终走 SDL。
+// 有效通道判定：useRawInput_ && mouseCaptured_
 //
 // 输入不丢失保证：
 //   - keysDown_ 记录持续状态
-//   - keysPressedThisFrame_ / keysReleasedThisFrame_ 记录本帧的瞬时事件
-//
-// 事件历史：
-//   - 所有输入事件写入 InputEventHistory，保留最近 250ms
-//   - 用于输入缓冲、连招窗口、精确判定
+//   - keysPressedThisFrame_ / keysReleasedThisFrame_ 记录本帧瞬时事件
+//   - 鼠标按钮同理
 
 class InputSystem {
 public:
     void Initialize(SDL_Window* window);
     void Shutdown();
 
-    // 每帧调用
     void BeginFrame();
-    void ProcessEvent(const SDL_Event& e);        // SDL 通道
-    void ProcessRawInputEvent(const InputEvent& ev); // Raw Input 通道
+    void ProcessEvent(const SDL_Event& e);
+    void ProcessRawInputEvent(const InputEvent& ev);
     void EndFrame();
 
-    // ---------- 鼠标 ----------
+    // ---------- 鼠标移动 ----------
     float GetMouseDeltaX() const { return mouseDeltaX_; }
     float GetMouseDeltaY() const { return mouseDeltaY_; }
 
     void SetMouseCaptured(bool captured);
     bool IsMouseCaptured() const { return mouseCaptured_; }
+
+    // ---------- 鼠标按钮 ----------
+    // button 用 SDL_BUTTON_LEFT / SDL_BUTTON_RIGHT / ... （1~5）
+    bool IsMouseButtonDown(int button) const;
+    bool WasMouseButtonPressed(int button) const;
+    bool WasMouseButtonReleased(int button) const;
 
     // ---------- 键盘 ----------
     bool IsKeyDown(SDL_Scancode key) const;
@@ -69,22 +65,24 @@ public:
 
 private:
     static constexpr int kMaxKeys = SDL_NUM_SCANCODES;
+    static constexpr int kMaxMouseButtons = 8;
 
-    // 内部：把事件应用到状态表
     void ApplyEvent(const InputEvent& ev);
-
-    // 当前是否应该用 Raw Input 通道
-    // 需要 useRawInput_ 且鼠标被捕获（编辑器模式下鼠标释放，Raw Input 无效）
     bool IsRawInputActive() const;
 
     SDL_Window* window_ = nullptr;
 
-    // 键盘状态
+    // 键盘
     bool keysDown_[kMaxKeys] = {};
     bool keysPressedThisFrame_[kMaxKeys] = {};
     bool keysReleasedThisFrame_[kMaxKeys] = {};
 
-    // 鼠标
+    // 鼠标按钮（index 0~7，对应 SDL_BUTTON_*）
+    bool mouseButtonsDown_[kMaxMouseButtons] = {};
+    bool mouseButtonsPressedThisFrame_[kMaxMouseButtons] = {};
+    bool mouseButtonsReleasedThisFrame_[kMaxMouseButtons] = {};
+
+    // 鼠标移动
     float mouseDeltaX_ = 0.0f;
     float mouseDeltaY_ = 0.0f;
     bool mouseCaptured_ = false;

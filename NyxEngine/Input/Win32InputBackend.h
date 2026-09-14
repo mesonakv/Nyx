@@ -21,9 +21,10 @@
 //   - 不设置 RIDEV_NOLEGACY，SDL 仍能收到 legacy 事件（ImGui 需要）
 //   - 事件通过 EventSink 推给 InputSystem
 //
-// 生命周期：
-//   - Initialize 时注册设备、安装消息 hook
-//   - Shutdown 时注销设备、移除 hook
+// 主按键交换：
+//   - Windows 的 SM_SWAPBUTTON 控制主鼠标按钮
+//   - Raw Input 走硬件层，系统不自动交换，需要手动处理
+//   - 初始化时读一次，之后静态应用
 
 class Win32InputBackend : public IInputBackend {
 public:
@@ -37,9 +38,8 @@ public:
     void Shutdown() override;
 
 private:
-    // SDL 消息 hook 的静态回调
-    // 返回类型是 SDL_bool（int），不是 C++ bool
 #ifdef _WIN32
+    // SDL 消息 hook 的静态回调
     static void SDLCALL MessageHook(
         void* userdata,
         void* hWnd,
@@ -65,5 +65,6 @@ private:
 
 #ifdef _WIN32
     HWND hwnd_ = nullptr;
+    bool swapButtons_ = false;   // SM_SWAPBUTTON 的值（true = 右键为主键）
 #endif
 };

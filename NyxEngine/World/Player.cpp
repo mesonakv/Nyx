@@ -24,15 +24,18 @@ void Player::Update(float dt,
     }
 
     // ---------- 2. 水平移动 ----------
-    // 地面：有输入就加速，没输入就摩擦
-    // 空中：有输入就加速（低加速度），没输入就不施加摩擦
     if (onGround) {
         if (wishLen > 0.001f) {
+            // 先衰减垂直于 wishDir 的速度分量
+            // 这样"改变移动方向"时旧方向的速度会快速消失
+            ApplyLateralFriction(wishDir, dt);
+            // 再沿 wishDir 加速
             Accelerate(wishDir, groundAccel, maxSpeed, dt);
         } else {
             ApplyFriction(dt);
         }
     } else {
+        // 空中不衰减垂直速度（保留动量，允许跳跃后的方向控制）
         if (wishLen > 0.001f) {
             Accelerate(wishDir, airAccel, maxSpeed, dt);
         }
@@ -55,7 +58,6 @@ void Player::Update(float dt,
     }
 
     // ---------- 5. 跳跃触发 ----------
-    // buffer 和 coyote 同时有效时触发
     if (jumpBufferTimer_ > 0.0f && coyoteTimer_ > 0.0f) {
         velocity.y = jumpSpeed;
         jumpBufferTimer_ = 0.0f;
@@ -64,8 +66,7 @@ void Player::Update(float dt,
         onGround = false;
     }
 
-    // ---------- 6. Jump cut（松开跳跃键） ----------
-    // 上升过程中松开跳跃键 → 截断上升速度
+    // ---------- 6. Jump cut ----------
     if (jumping_ && !jumpHeld && velocity.y > 0.0f) {
         velocity.y *= jumpCutMultiplier;
         jumping_ = false;
@@ -122,7 +123,10 @@ void Player::Update(float dt,
     }
 }
 
+// ============ 摩擦 ============
+
 void Player::ApplyFriction(float dt) {
+    // 无输入时：整体衰减水平速度
     float speed = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
     if (speed < 0.1f) {
         velocity.x = 0.0f;
@@ -137,10 +141,36 @@ void Player::ApplyFriction(float dt) {
     velocity.z *= ratio;
 }
 
+void Player::ApplyLateralFriction(const glm::vec3& wishDir, float dt) {
+    // 有输入时：只衰减垂直于 wishDir 的速度分量。
+    // 保留沿 wishDir 的分量，避免"保持方向不变"时速度流失。
+    //
+    // 数学：
+    //   vel2d = 水平速度向量
+    //   along = vel2d · wishDir （沿 wishDir 的标量分量）
+    //   lateral = vel2d - wishDir * along （垂直分量）
+    //   衰减 lateral，保留 along
+
+    glm::vec3 vel2d(velocity.x, 0.0f, velocity.z);
+    float along = glm::dot(vel2d, wishDir);
+    glm::vec3 lateral = vel2d - wishDir * along;
+
+    float lateralSpeed = glm::length(lateral);
+    if (lateralSpeed < 0.01f) return;
+
+    float drop = lateralSpeed * groundFriction * dt;
+    float newSpeed = std::max(0.0f, lateralSpeed - drop);
+    float ratio = newSpeed / lateralSpeed;
+    lateral *= ratio;
+
+    velocity.x = wishDir.x * along + lateral.x;
+    velocity.z = wishDir.z * along + lateral.z;
+}
+
+// ============ 加速 ============
+
 void Player::Accelerate(const glm::vec3& wishDir, float accel, float maxSpeed, float dt) {
-    // Source 引擎风格的加速。
-    // 只在"沿 wishDir 的分速度 < maxSpeed"时加速，
-    // 且不超过 maxSpeed。这样斜向移动也不会超过最大速度。
+    // Source 引擎风格：只在沿 wishDir 的分速度 < maxSpeed 时加速
     float currentSpeed = velocity.x * wishDir.x + velocity.z * wishDir.z;
     float addSpeed = maxSpeed - currentSpeed;
     if (addSpeed <= 0.0f) return;

@@ -1,0 +1,15 @@
+{
+  "bindings": {
+    "MoveForward":   [ { "device": "keyboard", "code": 96 } ],
+    "MoveBackward":  [ { "device": "keyboard", "code": 93 } ],
+    "MoveLeft":      [ { "device": "keyboard", "code": 92 } ],
+    "MoveRight":     [ { "device": "keyboard", "code": 94 } ],
+    "Jump":          [ { "device": "keyboard", "code": 79 } ],
+    "Dash":          [ { "device": "keyboard", "code": 225 } ],
+    "Slide":         [ { "device": "keyboard", "code": 224 } ],
+    "PrimaryFire":   [ { "device": "mouse",    "code": 1 } ],
+    "SecondaryFire": [ { "device": "mouse",    "code": 3 } ],
+    "ToggleEditor":  [ { "device": "keyboard", "code": 58 } ],
+    "Pause":         [ { "device": "keyboard", "code": 41 } ]
+  }
+}

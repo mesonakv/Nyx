@@ -3,6 +3,7 @@
 #include "Core/VulkanContext.h"
 #include "Core/ImGuiManager.h"
 #include "Core/InputSystem.h"
+#include "Input/InputMap.h"
 #include "Render/Renderer.h"
 #include "Render/LightingSystem.h"
 #include "Scene/Camera.h"
@@ -14,11 +15,6 @@
 //
 // 引擎拥有所有子系统。
 // main 只负责：SDL 初始化、窗口创建、Game 逻辑、主循环。
-//
-// 生命周期：
-//   Initialize(window, settings) -> 创建并初始化所有子系统
-//   主循环: BeginFrame(dt) -> [game update] -> [render] -> EndFrame()
-//   Shutdown() -> 逆序销毁
 
 class NyxEngine {
 public:
@@ -34,6 +30,7 @@ public:
     ImGuiManager& GetImGuiManager()     { return imgui_; }
     Renderer& GetRenderer()             { return renderer_; }
     InputSystem& GetInput()             { return input_; }
+    InputMap& GetInputMap()             { return inputMap_; }
     LightingSystem& GetLighting()       { return lighting_; }
     Camera& GetCamera()                 { return camera_; }
     AudioClock& GetAudioClock()         { return audioClock_; }
@@ -45,6 +42,7 @@ private:
     ImGuiManager imgui_;
     Renderer renderer_;
     InputSystem input_;
+    InputMap inputMap_;
     LightingSystem lighting_;
     Camera camera_;
     AudioClock audioClock_;

@@ -9,6 +9,7 @@
 #include "NyxEngine/Core/Platform.h"
 #include "NyxEngine/Core/InputSystem.h"
 #include "NyxEngine/Core/ImGuiManager.h"
+#include "NyxEngine/Input/InputMap.h"
 #include "NyxEngine/Render/Renderer.h"
 #include "NyxEngine/Render/FrameData.h"
 #include "NyxEngine/Scene/Camera.h"
@@ -48,14 +49,10 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     performanceFrequency_ = SDL_GetPerformanceFrequency();
     lastFrameCounter_ = SDL_GetPerformanceCounter();
 
-    // 材质
     materials_.LoadDefaults();
-
-    // 目标
     targets_.currentMaterialIndex = materials_.selectedIndex;
     targets_.Spawn();
 
-    // 显示模式
     displayModes_ = GetAvailableDisplayModes();
     pendingSettings_ = engine.GetVulkanContext().settings;
 
@@ -64,7 +61,6 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
         PhysicsWorld& physics = engine.GetWorldState().physics;
         Player& player = engine.GetWorldState().player;
 
-        // 地面
         CollisionFilter groundFilter = CollisionFilter::Make(
             PhysicsLayer::StaticGeo,
             PhysicsLayer::Player | PhysicsLayer::Projectile | PhysicsLayer::Debris);
@@ -77,7 +73,6 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
             groundT,
             groundFilter);
 
-        // 玩家胶囊
         CollisionFilter playerFilter = CollisionFilter::Make(
             PhysicsLayer::Player,
             PhysicsLayer::StaticGeo | PhysicsLayer::Target | PhysicsLayer::Boss);
@@ -93,6 +88,12 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
         NYX_LOG_INFO("Physics: ground + player capsule created");
     }
 
+    // ---------- 输入映射：加载自定义绑定（如果存在）----------
+    if (!engine.GetInputMap().LoadFromJson("config/input.json")) {
+        // 文件不存在或加载失败，用默认值
+        NYX_LOG_INFO("InputMap: using default bindings");
+    }
+
     // 编辑器面板
     EditorPanel::Context ctx;
     ctx.camera = &engine.GetCamera();
@@ -104,6 +105,7 @@ void MyGame::Initialize(NyxEngine& engine, SDL_Window* window) {
     ctx.frameTimes = &frameTimes_;
     ctx.pendingDisplayChange = &pendingDisplayChange_;
     ctx.input = &engine.GetInput();
+    ctx.inputMap = &engine.GetInputMap();
     ctx.player = &engine.GetWorldState().player;
     editor_.Initialize(ctx);
 
@@ -127,7 +129,6 @@ void MyGame::Run() {
 
         engine_->BeginFrame(dt);
 
-        // ---------- 事件 ----------
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             engine_->GetInput().ProcessEvent(event);
@@ -135,13 +136,12 @@ void MyGame::Run() {
             ImGui_ImplSDL2_ProcessEvent(&event);
         }
 
-        // ---------- 更新 ----------
-        Update(dt);
+        // ---------- InputMap：翻译原始输入为 Action ----------
+        engine_->GetInputMap().Update(engine_->GetInput());
 
-        // ---------- 渲染 ----------
+        Update(dt);
         Render();
 
-        // ---------- 帧计时 ----------
         uint64_t frameEndCounter = SDL_GetPerformanceCounter();
         float frameTimeMs = (float)((frameEndCounter - frameStartCounter) * 1000.0 / performanceFrequency_);
         frameTimes_.push_back(frameTimeMs);
@@ -195,17 +195,20 @@ void MyGame::ProcessEvent(const SDL_Event& e) {
 
 void MyGame::Update(float dt) {
     InputSystem& input = engine_->GetInput();
+    InputMap& inputMap = engine_->GetInputMap();
     Camera& camera = engine_->GetCamera();
     Player& player = engine_->GetWorldState().player;
 
-    // ---------- 输入业务逻辑 ----------
+    // ---------- 系统输入 ----------
     if (input.ShouldQuit()) running_ = false;
-    if (input.WasKeyPressed(SDL_SCANCODE_ESCAPE)) running_ = false;
-    if (input.WasKeyPressed(SDL_SCANCODE_F1)) {
+    if (inputMap.WasActionPressed(Action::Pause)) running_ = false;
+
+    if (inputMap.WasActionPressed(Action::ToggleEditor)) {
         editorMode_ = !editorMode_;
         input.SetMouseCaptured(!editorMode_);
     }
 
+    // ---------- 相机 ----------
     if (!editorMode_) {
         camera.ProcessMouseDelta(input.GetMouseDeltaX(), input.GetMouseDeltaY());
     }
@@ -226,22 +229,21 @@ void MyGame::Update(float dt) {
         HandleDisplayChange();
     }
 
-    // ---------- 玩家更新 ----------
-    // 从 WASD 生成移动方向（相机 yaw 空间的水平方向）
+    // ---------- 玩家输入 ----------
     glm::vec3 moveDir(0.0f);
     if (!editorMode_) {
         float yaw = camera.yaw;
         glm::vec3 forward(sin(yaw), 0.0f, -cos(yaw));
         glm::vec3 right(cos(yaw), 0.0f, sin(yaw));
 
-        if (input.IsKeyDown(SDL_SCANCODE_W)) moveDir += forward;
-        if (input.IsKeyDown(SDL_SCANCODE_S)) moveDir -= forward;
-        if (input.IsKeyDown(SDL_SCANCODE_D)) moveDir += right;
-        if (input.IsKeyDown(SDL_SCANCODE_A)) moveDir -= right;
+        if (inputMap.IsActionDown(Action::MoveForward))  moveDir += forward;
+        if (inputMap.IsActionDown(Action::MoveBackward)) moveDir -= forward;
+        if (inputMap.IsActionDown(Action::MoveRight))    moveDir += right;
+        if (inputMap.IsActionDown(Action::MoveLeft))     moveDir -= right;
     }
 
-    bool jumpPressed = !editorMode_ && input.WasKeyPressed(SDL_SCANCODE_SPACE);
-    bool jumpHeld = !editorMode_ && input.IsKeyDown(SDL_SCANCODE_SPACE);
+    bool jumpPressed = !editorMode_ && inputMap.WasActionPressed(Action::Jump);
+    bool jumpHeld    = !editorMode_ && inputMap.IsActionDown(Action::Jump);
 
     player.Update(dt, moveDir, jumpPressed, jumpHeld, camera.yaw, engine_->GetWorldState().physics);
 
@@ -249,7 +251,7 @@ void MyGame::Update(float dt) {
     uint32_t currentTime = SDL_GetTicks();
 
     if (!editorMode_) {
-        if (input.IsKeyDown(SDL_SCANCODE_SPACE) && currentTime - lastShotTime_ > 200) {
+        if (inputMap.IsActionDown(Action::PrimaryFire) && currentTime - lastShotTime_ > 200) {
             targets_.Shoot(player.GetEyePosition(), camera.GetDirection());
             lastShotTime_ = currentTime;
         }
@@ -269,7 +271,6 @@ void MyGame::Update(float dt) {
         fpsTimer_ = now;
     }
 
-    // ---------- 标题 ----------
     UpdateTitle();
 }
 
@@ -353,16 +354,13 @@ void MyGame::UpdateTitle() {
 // ============ 渲染 ============
 
 void MyGame::Render() {
-    // ---------- 光照 ----------
     LightingData lightingData = engine_->GetLighting().Update();
 
-    // ---------- 编辑器 ----------
     engine_->GetImGuiManager().NewFrame();
     if (editorMode_) {
         editor_.Draw();
     }
 
-    // ---------- 帧数据 ----------
     VulkanContext& vk = engine_->GetVulkanContext();
     Camera& camera = engine_->GetCamera();
     Player& player = engine_->GetWorldState().player;
@@ -385,30 +383,23 @@ void MyGame::Render() {
     frameData.lighting = lightingData;
     frameData.imgui = &engine_->GetImGuiManager();
 
-    // ---------- Debug Draw：物理世界可视化 ----------
+    // ---------- Debug Draw ----------
     {
         DebugDraw& dbg = engine_->GetRenderer().GetDebugDraw();
-        PhysicsWorld& physics = engine_->GetWorldState().physics;
         dbg.Begin();
 
-        // 画出物理世界中的所有形状
-        // 简化：只画已知的几个（地面 + 玩家胶囊），
-        // 等 PhysicsWorld 有 ForEachShape 再加
         dbg.Box(glm::vec3(0.0f, -2.1f, 0.0f),
                 glm::vec3(30.0f, 0.1f, 30.0f),
                 glm::quat(1, 0, 0, 0),
                 glm::vec3(0.4f, 0.4f, 0.4f));
 
-        // 玩家胶囊
         glm::vec3 capsuleCenter = player.GetCapsuleCenter();
         glm::vec3 p0 = capsuleCenter - glm::vec3(0, Player::kCapsuleHalfHeight, 0);
         glm::vec3 p1 = capsuleCenter + glm::vec3(0, Player::kCapsuleHalfHeight, 0);
         dbg.Capsule(p0, p1, Player::kCapsuleRadius, glm::vec3(0.3f, 0.9f, 0.3f));
 
-        // 黄射线：从眼睛往前
         dbg.Ray(eyePos, camera.GetDirection(), 10.0f, glm::vec3(1, 1, 0));
     }
-    // ---------- Debug Draw 结束 ----------
 
     engine_->GetRenderer().DrawFrame(vk, frameData);
 }

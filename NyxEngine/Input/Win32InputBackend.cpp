@@ -34,8 +34,21 @@ static SDL_Scancode VKToSDLScancode(UINT vk) {
     }
 
     // 小键盘 0-9
-    if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) {
-        return (SDL_Scancode)(SDL_SCANCODE_KP_0 + (vk - VK_NUMPAD0));
+    // 注意：SDL 的 KP_0 ~ KP_9 scancode 不是线性的，
+    // KP_0=98，KP_1=89，KP_2=90，...，KP_9=97
+    // 必须逐一映射，不能用偏移量。
+    switch (vk) {
+    case VK_NUMPAD0: return SDL_SCANCODE_KP_0;
+    case VK_NUMPAD1: return SDL_SCANCODE_KP_1;
+    case VK_NUMPAD2: return SDL_SCANCODE_KP_2;
+    case VK_NUMPAD3: return SDL_SCANCODE_KP_3;
+    case VK_NUMPAD4: return SDL_SCANCODE_KP_4;
+    case VK_NUMPAD5: return SDL_SCANCODE_KP_5;
+    case VK_NUMPAD6: return SDL_SCANCODE_KP_6;
+    case VK_NUMPAD7: return SDL_SCANCODE_KP_7;
+    case VK_NUMPAD8: return SDL_SCANCODE_KP_8;
+    case VK_NUMPAD9: return SDL_SCANCODE_KP_9;
+    default: break;
     }
 
     switch (vk) {
@@ -125,9 +138,13 @@ bool Win32InputBackend::Initialize(void* nativeWindowHandle, EventSink sink) {
     }
     hwnd_ = wmInfo.info.win.window;
 
-    // 禁用窗口的 IME（输入法）
-    // 中文输入法会截获键盘消息，导致游戏按键失效（F1、ESC、空格等）。
-    // 游戏运行时不需要输入法。未来做聊天框时，在进入文本框前临时恢复。
+    // 读系统"主鼠标按钮"设置。
+    // SM_SWAPBUTTON 非零表示系统把右键设为主键。
+    // Raw Input 走硬件层，系统不自动交换，需要手动应用。
+    // 只读一次，之后静态使用。
+    swapButtons_ = (GetSystemMetrics(SM_SWAPBUTTON) != 0);
+    NYX_LOG_INFO("Win32InputBackend: swap buttons = %s",
+                 swapButtons_ ? "yes" : "no");
 
     // 注册 Raw Input 设备
     // dwFlags = 0：不设 RIDEV_NOLEGACY，保留 legacy 消息给 SDL/ImGui
@@ -177,7 +194,6 @@ void Win32InputBackend::Shutdown() {
     RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE));
 
     // 不恢复 IME——窗口销毁时系统自动清理。
-    // 如果窗口不销毁而只是重建 backend，需要在这里 ImmAssociateContext(hwnd_, oldContext)。
 
     hwnd_ = nullptr;
     window_ = nullptr;
@@ -212,7 +228,7 @@ void Win32InputBackend::HandleRawInput(void* hRawInput) {
     if (GetRawInputData((HRAWINPUT)hRawInput, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER)) != 0) {
         return;
     }
-    if (size == 0 || size > 256) return;   // 异常大小保护
+    if (size == 0 || size > 256) return;
 
     BYTE buffer[256];
     UINT read = GetRawInputData((HRAWINPUT)hRawInput, RID_INPUT, buffer, &size, sizeof(RAWINPUTHEADER));
@@ -228,14 +244,11 @@ void Win32InputBackend::HandleRawInput(void* hRawInput) {
 }
 
 void Win32InputBackend::ParseKeyboard(const RAWKEYBOARD& kb) {
-    // VKey 为 0xFF 表示"假的"按键事件（某些特殊键），跳过
     if (kb.VKey == 0xFF) return;
 
     SDL_Scancode scancode = VKToSDLScancode(kb.VKey);
     if (scancode == SDL_SCANCODE_UNKNOWN) return;
 
-    // 判断按下还是释放
-    // RI_KEY_BREAK 位为 1 表示释放
     bool isDown = (kb.Flags & RI_KEY_BREAK) == 0;
 
     InputEvent ev = {};
@@ -253,8 +266,6 @@ void Win32InputBackend::ParseMouse(const RAWMOUSE& mouse) {
     uint64_t ts = Platform::GetTimerNanos();
 
     // ---------- 移动 ----------
-    // 处理所有鼠标移动（不检查 MOUSE_MOVE_ABSOLUTE，
-    // 因为某些鼠标/驱动会错误地设置这个标志）
     if (mouse.lLastX != 0 || mouse.lLastY != 0) {
         InputEvent ev = {};
         ev.timestamp = ts;
@@ -275,9 +286,17 @@ void Win32InputBackend::ParseMouse(const RAWMOUSE& mouse) {
         USHORT upFlag;
         int    sdlButton;
     };
-    static const ButtonMapping kButtonMap[] = {
-        { RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_1_UP, SDL_BUTTON_LEFT   },
-        { RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_2_UP, SDL_BUTTON_RIGHT  },
+
+    // 物理按键 1 和 2 的语义根据系统主按键设置交换。
+    // swapButtons_ = false：1=左键，2=右键
+    // swapButtons_ = true ：1=右键，2=左键
+    // 中间键、侧键不交换。
+    const int btn1 = swapButtons_ ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT;
+    const int btn2 = swapButtons_ ? SDL_BUTTON_LEFT  : SDL_BUTTON_RIGHT;
+
+    const ButtonMapping kButtonMap[] = {
+        { RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_1_UP, btn1              },
+        { RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_2_UP, btn2              },
         { RI_MOUSE_BUTTON_3_DOWN, RI_MOUSE_BUTTON_3_UP, SDL_BUTTON_MIDDLE },
         { RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP, SDL_BUTTON_X1     },
         { RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP, SDL_BUTTON_X2     },
